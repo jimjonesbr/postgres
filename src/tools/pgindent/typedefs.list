@@ -3225,6 +3225,7 @@ XmlExpr
 XmlExprOp
 XmlOptionType
 XmlSerialize
+XmlSerializeFormat
 XmlTableBuilderData
 YYLTYPE
 YYSTYPE
