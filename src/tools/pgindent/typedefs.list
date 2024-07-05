@@ -3225,6 +3225,7 @@ XidStatus
 XmlExpr
 XmlExprOp
 XmlOptionType
+XmlCast
 XmlSerialize
 XmlTableBuilderData
 YYLTYPE
