@@ -1593,6 +1593,13 @@ typedef enum XmlOptionType
 	XMLOPTION_CONTENT,
 } XmlOptionType;
 
+typedef enum XmlSerializeDeclarationOption
+{
+	XMLSERIALIZE_INCLUDING_XMLDECLARATION,     /* */
+	XMLSERIALIZE_EXCLUDING_XMLDECLARATION,     /* */
+	XMLSERIALIZE_UNKNOWN_XMLDECLARATION        /* */
+} XmlSerializeDeclarationOption;
+
 typedef struct XmlExpr
 {
 	Expr		xpr;
@@ -1615,6 +1622,8 @@ typedef struct XmlExpr
 	int32		typmod pg_node_attr(query_jumble_ignore);
 	/* token location, or -1 if unknown */
 	ParseLoc	location;
+	/* xmlserialize flags INCLUDING and EXCLUDING XMLDECLARATION */
+	XmlSerializeDeclarationOption xmldeclaration pg_node_attr(query_jumble_ignore);
 } XmlExpr;
 
 /*

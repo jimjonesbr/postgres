@@ -848,6 +848,7 @@ typedef struct XmlSerialize
 	Node	   *expr;
 	TypeName   *typeName;
 	bool		indent;			/* [NO] INDENT */
+	XmlSerializeDeclarationOption	xmldeclaration;	/* INCLUDING or EXCLUDING XMLDECLARATION */
 	ParseLoc	location;		/* token location, or -1 if unknown */
 } XmlSerialize;
 

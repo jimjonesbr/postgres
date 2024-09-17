@@ -2491,6 +2491,7 @@ transformXmlSerialize(ParseState *pstate, XmlSerialize *xs)
 
 	xexpr->xmloption = xs->xmloption;
 	xexpr->indent = xs->indent;
+	xexpr->xmldeclaration = xs->xmldeclaration;
 	xexpr->location = xs->location;
 	/* We actually only need these to be able to parse back the expression. */
 	xexpr->type = targetType;

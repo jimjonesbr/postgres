@@ -653,7 +653,8 @@ xmltotext(PG_FUNCTION_ARGS)
 
 
 text *
-xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
+xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent,
+						XmlSerializeDeclarationOption xmldeclaration)
 {
 #ifdef USE_LIBXML
 	text	   *volatile result;
@@ -666,7 +667,8 @@ xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
 	PgXmlErrorContext *xmlerrcxt;
 #endif
 
-	if (xmloption_arg != XMLOPTION_DOCUMENT && !indent)
+	if (xmloption_arg != XMLOPTION_DOCUMENT &&
+		xmldeclaration == XMLSERIALIZE_UNKNOWN_XMLDECLARATION && !indent)
 	{
 		/*
 		 * We don't actually need to do anything, so just return the
@@ -697,8 +699,11 @@ xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
 				 errmsg("not an XML document")));
 	}
 
-	/* If we weren't asked to indent, we're done. */
-	if (!indent)
+	/*
+	 * If we weren't asked to indent and to explicitly hide or show the
+	 * xml declaration, we're done.
+	 */
+	if (!indent && xmldeclaration == XMLSERIALIZE_UNKNOWN_XMLDECLARATION)
 	{
 		xmlFreeDoc(doc);
 		return (text *) data;
@@ -710,6 +715,8 @@ xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
 	PG_TRY();
 	{
 		size_t		decl_len = 0;
+		int		 	standalone;
+		xmlChar 	*version;
 
 		/* The serialized data will go into this buffer. */
 		buf = xmlBufferCreate();
@@ -719,20 +726,25 @@ xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
 						"could not allocate xmlBuffer");
 
 		/* Detect whether there's an XML declaration */
-		parse_xml_decl(xml_text2xmlChar(data), &decl_len, NULL, NULL, NULL);
+		parse_xml_decl(xml_text2xmlChar(data), &decl_len, &version, NULL, &standalone);
 
 		/*
-		 * Emit declaration only if the input had one.  Note: some versions of
-		 * xmlSaveToBuffer leak memory if a non-null encoding argument is
-		 * passed, so don't do that.  We don't want any encoding conversion
-		 * anyway.
-		 */
-		if (decl_len == 0)
-			ctxt = xmlSaveToBuffer(buf, NULL,
-								   XML_SAVE_NO_DECL | XML_SAVE_FORMAT);
-		else
-			ctxt = xmlSaveToBuffer(buf, NULL,
-								   XML_SAVE_FORMAT);
+		* Emit declaration if the input had one or if it was explicitly
+		* requested via INCLUDING XMLDECLARATION. Indent the buffer content
+		* if the flag INDENT was used. Note: some versions of xmlSaveToBuffer
+		* leak memory if a non-null encoding argument is passed, so don't do
+		* that. We don't want any encoding conversion anyway.
+		*/
+		ctxt = xmlSaveToBuffer(buf, NULL,
+						/* remove XML declaration if EXCLUDING XMLDECLARATION was used. */
+						(xmldeclaration == XMLSERIALIZE_EXCLUDING_XMLDECLARATION ? XML_SAVE_NO_DECL : 0) |
+						/*
+						 * remove XML declaration if the xml string didn't have one and
+						 * INCLUDING XMLDECLARATION was not used
+						 */
+						((decl_len == 0 && xmldeclaration == XMLSERIALIZE_UNKNOWN_XMLDECLARATION) ? XML_SAVE_NO_DECL : 0) |
+						/* indent the xml dump if INDENT was used */
+						(indent ? XML_SAVE_FORMAT : 0));
 
 		if (ctxt == NULL || xmlerrcxt->err_occurred)
 			xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
@@ -772,7 +784,11 @@ xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
 			 * freeing of this node manually, and pass NULL here to make sure
 			 * there's not a dangling link.
 			 */
-			newline = xmlNewDocText(NULL, (const xmlChar *) "\n");
+			if (indent)
+				newline = xmlNewDocText(NULL, (const xmlChar *)"\n");
+			else
+				newline = xmlNewDocText(NULL, (const xmlChar *)"");
+
 			if (newline == NULL || xmlerrcxt->err_occurred)
 				xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
 							"could not allocate xml node");
@@ -796,6 +812,30 @@ xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
 					xml_ereport(xmlerrcxt, ERROR, ERRCODE_INTERNAL_ERROR,
 								"could not save content to xmlBuffer");
 				}
+			}
+
+			if (xmldeclaration == XMLSERIALIZE_INCLUDING_XMLDECLARATION)
+			{
+				StringInfoData xmldecl;
+				initStringInfo(&xmldecl);
+				appendStringInfo(&xmldecl, "<?xml");
+
+				if (doc->version)
+					appendStringInfo(&xmldecl, " version=\"%s\"", doc->version);
+
+				if (doc->encoding)
+					appendStringInfo(&xmldecl, " encoding=\"%s\"", doc->encoding);
+
+				if (doc->standalone == 1)
+					appendStringInfo(&xmldecl, " standalone=\"yes\"");
+				else if (doc->standalone == 0)
+					appendStringInfo(&xmldecl, " standalone=\"no\"");
+
+				appendStringInfo(&xmldecl, "?>\n");
+
+				xmlBufferAddHead(buf, (const xmlChar *)xmldecl.data, xmldecl.len);
+
+				pfree(xmldecl.data);
 			}
 
 			xmlFreeNode(newline);

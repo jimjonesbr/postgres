@@ -4496,7 +4496,7 @@ xml '<foo>bar</foo>'
     <type>xml</type>, uses the function
     <function>xmlserialize</function>:<indexterm><primary>xmlserialize</primary></indexterm>
 <synopsis>
-XMLSERIALIZE ( { DOCUMENT | CONTENT } <replaceable>value</replaceable> AS <replaceable>type</replaceable> [ [ NO ] INDENT ] )
+XMLSERIALIZE ( { DOCUMENT | CONTENT } <replaceable>value</replaceable> AS <replaceable>type</replaceable> [ [ NO ] INDENT ] { [INCLUDING XMLDECLARATION | EXCLUDING XMLDECLARATION] } )
 </synopsis>
     <replaceable>type</replaceable> can be
     <type>character</type>, <type>character varying</type>, or
@@ -4512,6 +4512,38 @@ XMLSERIALIZE ( { DOCUMENT | CONTENT } <replaceable>value</replaceable> AS <repla
     default) just emits the original input string.  Casting to a character
     type likewise produces the original string.
    </para>
+
+   <para>
+   The options <type>INCLUDING XMLDECLARATION</type> and <type>EXCLUDING XMLDECLARATION</type> specify
+   whether the XML declaration of an XML <replaceable>value</replaceable> is included in the serialized string or not, respectively.
+   If not specified, the output will contain an XML delcaration depending on XML <replaceable>value</replaceable>.
+   </para>
+
+   <para>
+Examples:
+   </para>
+<screen><![CDATA[
+SELECT xmlserialize(DOCUMENT '<foo><bar>42</bar></foo>'::xml AS text INCLUDING XMLDECLARATION);
+              xmlserialize
+----------------------------------------
+ <?xml version="1.0" encoding="UTF-8"?>+
+ <foo><bar>42</bar></foo>              +
+
+
+SELECT xmlserialize(DOCUMENT '<foo><bar>42</bar></foo>'::xml AS text INDENT INCLUDING XMLDECLARATION);
+              xmlserialize
+----------------------------------------
+ <?xml version="1.0" encoding="UTF-8"?>+
+ <foo>                                 +
+   <bar>42</bar>                       +
+ </foo>                                +
+
+
+SELECT xmlserialize(DOCUMENT '<?xml version="1.0" encoding="UTF-8"?><foo><bar>42</bar></foo>'::xml AS text EXCLUDING XMLDECLARATION);
+       xmlserialize
+--------------------------
+ <foo><bar>42</bar></foo>+
+]]></screen>
 
    <para>
     When a character string value is cast to or from type
