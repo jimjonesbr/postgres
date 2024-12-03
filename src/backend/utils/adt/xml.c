@@ -522,6 +522,18 @@ xmlcomment(PG_FUNCTION_ARGS)
 #endif
 }
 
+Datum
+xmldocument(PG_FUNCTION_ARGS)
+{
+#ifdef USE_LIBXML
+	xmltype	   *data = PG_GETARG_XML_P(0);
+
+	PG_RETURN_XML_P(xmlparse((text *) data, XMLOPTION_DOCUMENT, true));
+#else
+	NO_XML_SUPPORT();
+	return 0;
+#endif							/* not USE_LIBXML */
+}
 
 Datum
 xmltext(PG_FUNCTION_ARGS)

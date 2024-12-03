@@ -1855,3 +1855,39 @@ SELECT xmltext('x'|| '<P>73</P>'::xml || .42 || true || 'j'::char);
  x&lt;P&gt;73&lt;/P&gt;0.42truej
 (1 row)
 
+SELECT
+  xmldocument(
+    xmlelement(NAME root,
+      xmlattributes(42 AS att),
+      xmlcomment('comment'),
+      xmlelement(NAME foo,'<foo&bar>'),
+      xmlelement(NAME bar, xmlconcat('va', 'lue')),
+      xmlpi(name pi),
+      xmlelement(NAME txt, xmltext('<"&>'))
+    )
+  );
+                                                      xmldocument                                                       
+------------------------------------------------------------------------------------------------------------------------
+ <root att="42"><!--comment--><foo>&lt;foo&amp;bar&gt;</foo><bar>value</bar><?pi?><txt>&lt;&quot;&amp;&gt;</txt></root>
+(1 row)
+
+SELECT xmldocument(NULL);
+ xmldocument 
+-------------
+ 
+(1 row)
+
+SET xmloption TO CONTENT;
+\set VERBOSITY terse
+SELECT xmldocument('foo'::xml);
+ERROR:  invalid XML document
+SELECT xmldocument('foo');
+ERROR:  invalid XML document
+SELECT xmldocument('');
+ERROR:  invalid XML document
+SELECT xmldocument(' ');
+ERROR:  invalid XML document
+SELECT xmldocument(xmlcomment('comment'));
+ERROR:  invalid XML document
+\set VERBOSITY default
+SET xmloption TO DOCUMENT;

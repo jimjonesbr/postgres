@@ -14401,6 +14401,41 @@ SELECT xmlcomment('hello');
     </para>
    </sect3>
 
+   <sect3 id="functions-producing-xml-xmldocument">
+    <title><literal>xmldocument</literal></title>
+
+    <indexterm>
+     <primary>xmldocument</primary>
+    </indexterm>
+
+<synopsis>
+<function>xmldocument</function> ( <type>xml</type> ) <returnvalue>xml</returnvalue>
+</synopsis>
+
+    <para>
+     Creates an XML document from the given XML-expression. If the XML-expression is null, the result is null.
+    </para>
+
+    <para>
+     Example:
+<screen><![CDATA[
+SELECT
+  xmldocument(
+    xmlelement(NAME foo,
+      xmlattributes(42 AS att),
+      xmlelement(NAME bar,
+        xmlconcat('va', 'lue'))
+    )
+  );
+
+             xmldocument
+--------------------------------------
+ <foo att="42"><bar>value</bar></foo>
+(1 row)
+]]></screen>
+    </para>
+   </sect3>
+
    <sect3 id="functions-producing-xml-xmlconcat">
     <title><literal>xmlconcat</literal></title>
 

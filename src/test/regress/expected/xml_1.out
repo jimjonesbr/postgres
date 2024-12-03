@@ -1480,3 +1480,36 @@ ERROR:  unsupported XML feature
 LINE 1: SELECT xmltext('x'|| '<P>73</P>'::xml || .42 || true || 'j':...
                              ^
 DETAIL:  This functionality requires the server to be built with libxml support.
+SELECT
+  xmldocument(
+    xmlelement(NAME root,
+      xmlattributes(42 AS att),
+      xmlcomment('comment'),
+      xmlelement(NAME foo,'<foo&bar>'),
+      xmlelement(NAME bar, xmlconcat('va', 'lue')),
+      xmlpi(name pi),
+      xmlelement(NAME txt, xmltext('<"&>'))
+    )
+  );
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+SELECT xmldocument(NULL);
+ xmldocument 
+-------------
+ 
+(1 row)
+
+SET xmloption TO CONTENT;
+\set VERBOSITY terse
+SELECT xmldocument('foo'::xml);
+ERROR:  unsupported XML feature at character 20
+SELECT xmldocument('foo');
+ERROR:  unsupported XML feature at character 20
+SELECT xmldocument('');
+ERROR:  unsupported XML feature at character 20
+SELECT xmldocument(' ');
+ERROR:  unsupported XML feature at character 20
+SELECT xmldocument(xmlcomment('comment'));
+ERROR:  unsupported XML feature
+\set VERBOSITY default
+SET xmloption TO DOCUMENT;
