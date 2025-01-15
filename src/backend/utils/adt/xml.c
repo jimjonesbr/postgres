@@ -244,7 +244,6 @@ const TableFuncRoutine XmlTableRoutine =
 #define NAMESPACE_XSI "http://www.w3.org/2001/XMLSchema-instance"
 #define NAMESPACE_SQLXML "http://standards.iso.org/iso/9075/2003/sqlxml"
 
-
 #ifdef USE_LIBXML
 
 static int
@@ -865,6 +864,7 @@ xmlelement(XmlExpr *xexpr,
 	int			i;
 	ListCell   *arg;
 	ListCell   *narg;
+	ListCell   *nsarg;
 	PgXmlErrorContext *xmlerrcxt;
 	volatile xmlBufferPtr buf = NULL;
 	volatile xmlTextWriterPtr writer = NULL;
@@ -926,12 +926,53 @@ xmlelement(XmlExpr *xexpr,
 
 		xmlTextWriterStartElement(writer, (xmlChar *) xexpr->name);
 
-		forboth(arg, named_arg_strings, narg, xexpr->arg_names)
+		forthree(arg, named_arg_strings, narg, xexpr->arg_names, nsarg, xexpr->xmlnamespaces)
 		{
 			char	   *str = (char *) lfirst(arg);
 			char	   *argname = strVal(lfirst(narg));
+			char	   *prefix = strVal(lfirst(nsarg));
 
-			if (str)
+			if (str && strlen(prefix) != 0)
+			{
+				/*
+				 * SQL/XML:2023 - 11.2 <XML lexically scoped options>
+				 * Syntax Rule 6) No <XML namespace URI> shall be identical, as defined
+				 * in XML Namespaces, to http://www.w3.org/2000/xmlns/ or to
+				 * http://www.w3.org/XML/1998/namespace
+				 */
+				if (strcmp(str, NAMESPACE_XMLNS) == 0 || strcmp(str, NAMESPACE_XML) == 0)
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							 errmsg("invalid XML namespace URI \"%s\"", str),
+							 errdetail("this URI is already bounded to standard a namespace prefix")));
+
+				/*
+				 * SQL/XML:2023 - 11.2 <XML lexically scoped options>
+				 * Syntax Rule 7) The value of an <XML namespace URI> contained in an
+				 * <XML regular namespace declaration item> shall not be a zero-length string.
+				 */
+				if (argname && strlen(str) == 0)
+					ereport(ERROR,
+							(errcode(ERRCODE_ZERO_LENGTH_CHARACTER_STRING),
+							 errmsg("invalid XML namespace URI for \"%s\"", argname),
+							 errdetail("a regular XML namespace cannot be a zero-length string")));
+
+				/*
+				* xmlTextWriterWriteAttributeNS
+				*   prefix       - Namespace prefix for the attribute. Pass NULL for no prefix,
+				*				   which means DEFAULT namespace.
+				*   name         - Local name of the attribute (without prefix). This is the
+				*				   actual attribute name.
+				*   namespaceURI - Namespace URI associated with the prefix (NULL for none).
+				*   content      - Value of the attribute.
+				*/
+				xmlTextWriterWriteAttributeNS(writer,
+											  !argname ? NULL : (const xmlChar *) prefix,
+											  argname ? (const xmlChar *) argname : (const xmlChar *) prefix,
+											  NULL,
+											  (const xmlChar *) str);
+			}
+			else if (str)
 				xmlTextWriterWriteAttribute(writer,
 											(xmlChar *) argname,
 											(xmlChar *) str);
