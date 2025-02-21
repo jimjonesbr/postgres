@@ -10150,6 +10150,11 @@ get_rule_expr(Node *node, deparse_context *context,
 						appendStringInfoString(buf, " INDENT");
 					else
 						appendStringInfoString(buf, " NO INDENT");
+
+					if (xexpr->xmldeclaration == XMLSERIALIZE_INCLUDING_XMLDECLARATION)
+						appendStringInfoString(buf, " INCLUDING XMLDECLARATION");
+					else if (xexpr->xmldeclaration == XMLSERIALIZE_EXCLUDING_XMLDECLARATION)
+						appendStringInfoString(buf, " EXCLUDING XMLDECLARATION");
 				}
 
 				if (xexpr->op == IS_DOCUMENT)

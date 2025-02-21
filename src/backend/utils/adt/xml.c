@@ -653,7 +653,8 @@ xmltotext(PG_FUNCTION_ARGS)
 
 
 text *
-xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
+xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent,
+						XmlSerializeDeclarationOption xmldeclaration)
 {
 #ifdef USE_LIBXML
 	text	   *volatile result;
@@ -666,7 +667,8 @@ xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
 	PgXmlErrorContext *xmlerrcxt;
 #endif
 
-	if (xmloption_arg != XMLOPTION_DOCUMENT && !indent)
+	if (xmloption_arg != XMLOPTION_DOCUMENT &&
+		xmldeclaration == XMLSERIALIZE_NO_XMLDECLARATION_OPTION && !indent)
 	{
 		/*
 		 * We don't actually need to do anything, so just return the
@@ -697,8 +699,11 @@ xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
 				 errmsg("not an XML document")));
 	}
 
-	/* If we weren't asked to indent, we're done. */
-	if (!indent)
+	/*
+	 * If we weren't asked to indent or to explicitly hide or show the
+	 * xml declaration, we're done.
+	 */
+	if (!indent && xmldeclaration == XMLSERIALIZE_NO_XMLDECLARATION_OPTION)
 	{
 		xmlFreeDoc(doc);
 		return (text *) data;
@@ -722,17 +727,22 @@ xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
 		parse_xml_decl(xml_text2xmlChar(data), &decl_len, NULL, NULL, NULL);
 
 		/*
-		 * Emit declaration only if the input had one.  Note: some versions of
-		 * xmlSaveToBuffer leak memory if a non-null encoding argument is
-		 * passed, so don't do that.  We don't want any encoding conversion
-		 * anyway.
-		 */
-		if (decl_len == 0)
-			ctxt = xmlSaveToBuffer(buf, NULL,
-								   XML_SAVE_NO_DECL | XML_SAVE_FORMAT);
-		else
-			ctxt = xmlSaveToBuffer(buf, NULL,
-								   XML_SAVE_FORMAT);
+		* Emit declaration if the input had one or if it was explicitly
+		* requested via INCLUDING XMLDECLARATION. Indent the buffer content
+		* if the flag INDENT was used. Note: some versions of xmlSaveToBuffer
+		* leak memory if a non-null encoding argument is passed, so don't do
+		* that. We don't want any encoding conversion anyway.
+		*/
+		ctxt = xmlSaveToBuffer(buf, NULL,
+			/* remove XML declaration if EXCLUDING XMLDECLARATION was used. */
+			(xmldeclaration == XMLSERIALIZE_EXCLUDING_XMLDECLARATION ? XML_SAVE_NO_DECL : 0) |
+			/*
+				* remove XML declaration if the xml string didn't have one and
+				* INCLUDING XMLDECLARATION was not used
+				*/
+			((decl_len == 0 && xmldeclaration == XMLSERIALIZE_NO_XMLDECLARATION_OPTION) ? XML_SAVE_NO_DECL : 0) |
+			/* indent the xml dump if INDENT was used */
+			(indent ? XML_SAVE_FORMAT : 0));
 
 		if (ctxt == NULL || xmlerrcxt->err_occurred)
 			xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
@@ -754,7 +764,7 @@ xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
 			 * content nodes, and then iterate over the nodes.
 			 */
 			xmlNodePtr	root;
-			xmlNodePtr	newline;
+			xmlNodePtr	newline = NULL;
 
 			root = xmlNewNode(NULL, (const xmlChar *) "content-root");
 			if (root == NULL || xmlerrcxt->err_occurred)
@@ -772,15 +782,19 @@ xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
 			 * freeing of this node manually, and pass NULL here to make sure
 			 * there's not a dangling link.
 			 */
-			newline = xmlNewDocText(NULL, (const xmlChar *) "\n");
-			if (newline == NULL || xmlerrcxt->err_occurred)
-				xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
-							"could not allocate xml node");
+			if (indent)
+			{
+				newline = xmlNewDocText(NULL, (const xmlChar *)"\n");
+
+				if (newline == NULL || xmlerrcxt->err_occurred)
+					xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
+								"could not allocate xml node");
+			}
 
 			for (xmlNodePtr node = root->children; node; node = node->next)
 			{
 				/* insert newlines between nodes */
-				if (node->type != XML_TEXT_NODE && node->prev != NULL)
+				if (node->type != XML_TEXT_NODE && node->prev != NULL && newline != NULL)
 				{
 					if (xmlSaveTree(ctxt, newline) == -1 || xmlerrcxt->err_occurred)
 					{
@@ -792,13 +806,44 @@ xmltotext_with_options(xmltype *data, XmlOptionType xmloption_arg, bool indent)
 
 				if (xmlSaveTree(ctxt, node) == -1 || xmlerrcxt->err_occurred)
 				{
-					xmlFreeNode(newline);
+					if(newline != NULL)
+						xmlFreeNode(newline);
 					xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
 								"could not save content to xmlBuffer");
 				}
 			}
 
-			xmlFreeNode(newline);
+			/*
+			 * If the flag INCLUDING XMLDECLARATION is specified, we have
+			 * to manually add the XML declaration here. xmlSaveTree() does
+			 * not include it.
+			 */
+			if (xmldeclaration == XMLSERIALIZE_INCLUDING_XMLDECLARATION)
+			{
+				StringInfoData xmldecl;
+				initStringInfo(&xmldecl);
+				appendStringInfoString(&xmldecl, "<?xml");
+
+				if (doc->version)
+					appendStringInfo(&xmldecl, " version=\"%s\"", doc->version);
+
+				if (doc->encoding)
+					appendStringInfo(&xmldecl, " encoding=\"%s\"", doc->encoding);
+
+				/* We only add "standalone" if the input's XML declaration had one */
+				if (doc->standalone == 1)
+					appendStringInfo(&xmldecl, " standalone=\"yes\"");
+				else if (doc->standalone == 0)
+					appendStringInfo(&xmldecl, " standalone=\"no\"");
+
+				appendStringInfoString(&xmldecl, "?>\n");
+				xmlBufferAddHead(buf, (const xmlChar *)xmldecl.data, xmldecl.len);
+
+				pfree(xmldecl.data);
+			}
+
+			if (newline != NULL)
+				xmlFreeNode(newline);
 		}
 
 		if (xmlSaveClose(ctxt) == -1 || xmlerrcxt->err_occurred)
