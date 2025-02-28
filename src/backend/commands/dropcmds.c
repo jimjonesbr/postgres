@@ -16,6 +16,7 @@
 
 #include "access/table.h"
 #include "access/xact.h"
+#include "access/xlog.h"
 #include "catalog/dependency.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaddress.h"
@@ -26,6 +27,7 @@
 #include "parser/parse_type.h"
 #include "utils/acl.h"
 #include "utils/lsyscache.h"
+#include "utils/guc.h"
 
 
 static void does_not_exist_skipping(ObjectType objtype,
@@ -54,6 +56,9 @@ RemoveObjects(DropStmt *stmt)
 {
 	ObjectAddresses *objects;
 	ListCell   *cell1;
+	XLogRecPtr lsn = InvalidXLogRecPtr;
+	char *schemaname;
+	Oid schemaoid;
 
 	objects = new_object_addresses();
 
@@ -105,6 +110,13 @@ RemoveObjects(DropStmt *stmt)
 			check_object_ownership(GetUserId(), stmt->removeType, address,
 								   object, relation);
 
+		if (log_ddl_lsn && stmt->removeType == OBJECT_SCHEMA)
+		{
+			lsn = GetInsertRecPtr();
+			schemaoid = address.objectId;
+			schemaname = get_namespace_name(schemaoid);
+		}
+
 		/*
 		 * Make note if a temporary namespace has been accessed in this
 		 * transaction.
@@ -123,6 +135,11 @@ RemoveObjects(DropStmt *stmt)
 	performMultipleDeletions(objects, stmt->behavior, 0);
 
 	free_object_addresses(objects);
+
+	if(!XLogRecPtrIsInvalid(lsn))
+		elog(NOTICE, "drop schema \"%s\": oid=%u, lsn=%X/%X",
+			schemaname, schemaoid, LSN_FORMAT_ARGS(lsn));
+
 }
 
 /*

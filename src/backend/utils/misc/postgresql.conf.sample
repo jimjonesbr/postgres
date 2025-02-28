@@ -622,6 +622,7 @@
 					# than the specified size in kilobytes;
 					# -1 disables, 0 logs all temp files
 #log_timezone = 'GMT'
+#log_ddl_lsn = off  # Logs LSN before DROP TABLE, DROP SCHEMA or TRUNCATE operations.
 
 # - Process Title -
 

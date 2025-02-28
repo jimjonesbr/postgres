@@ -507,6 +507,7 @@ bool		log_executor_stats = false;
 bool		log_statement_stats = false;	/* this is sort of all three above
 											 * together */
 bool		log_btree_build_stats = false;
+bool 		log_ddl_lsn = false;
 char	   *event_source;
 
 bool		row_security;
@@ -1449,6 +1450,14 @@ struct config_bool ConfigureNamesBool[] =
 		&log_statement_stats,
 		false,
 		check_log_stats, NULL, NULL
+	},
+	{
+		{"log_ddl_lsn", PGC_USERSET, STATS_MONITORING,
+			gettext_noop("Logs LSN before DROP TABLE or TRUNCATE operations."),
+			NULL
+		},
+		&log_ddl_lsn,
+		false, NULL, NULL, NULL
 	},
 #ifdef BTREE_BUILD_STATS
 	{

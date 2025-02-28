@@ -54,6 +54,7 @@
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_type.h"
 #include "catalog/storage.h"
+#include "catalog/namespace.h"
 #include "commands/tablecmds.h"
 #include "commands/typecmds.h"
 #include "common/int.h"
@@ -74,6 +75,7 @@
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+#include "utils/guc.h"
 
 
 /* Potentially set by pg_upgrade_support functions */
@@ -1813,6 +1815,26 @@ heap_drop_with_catalog(Oid relid)
 	 * Open and lock the relation.
 	 */
 	rel = relation_open(relid, AccessExclusiveLock);
+
+	/*
+	 * Log the LSN of a permanent table before deletion. This allows tracking
+	 * the last WAL position before the relation is dropped, which can be
+	 * useful for recovery or debugging purposes.
+	 */
+	if (log_ddl_lsn &&
+		rel->rd_rel->relpersistence == RELPERSISTENCE_PERMANENT &&
+		(rel->rd_rel->relkind == RELKIND_RELATION ||
+		 rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE) &&
+		 strncmp(RelationGetRelationName(rel), "pg_temp_", 8) != 0)
+	{
+		XLogRecPtr lsn = GetInsertRecPtr();
+
+		elog(NOTICE, "drop table \"%s.%s\": oid=%u, lsn=%X/%X",
+			 get_namespace_name(RelationGetNamespace(rel)),
+			 RelationGetRelationName(rel),
+			 relid,
+			 LSN_FORMAT_ARGS(lsn));
+	}
 
 	/*
 	 * There can no longer be anyone *else* touching the relation, but we

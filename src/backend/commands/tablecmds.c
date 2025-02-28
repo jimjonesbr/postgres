@@ -108,6 +108,7 @@
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
 #include "utils/usercontext.h"
+#include "utils/guc.h"
 
 /*
  * ON COMMIT action list
@@ -2104,6 +2105,27 @@ ExecuteTruncateGuts(List *explicit_rels,
 	foreach(cell, rels)
 	{
 		Relation	rel = (Relation) lfirst(cell);
+
+		/*
+		 * Log the LSN of a permanent table before truncation.
+		 * This allows tracking the last WAL position before the truncation occurs,
+		 * which can be useful for PITR or debugging purposes.
+		 *
+		 * Partitioned tables are included in the logging since they can be explicitly
+		 * truncated. However, actual tuple removal only happens for leaf partitions.
+		 */
+		if (log_ddl_lsn &&
+			rel->rd_rel->relpersistence == RELPERSISTENCE_PERMANENT &&
+			(rel->rd_rel->relkind == RELKIND_RELATION || rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE))
+		{
+			XLogRecPtr lsn = GetInsertRecPtr();
+
+			elog(NOTICE, "truncate table \"%s.%s\": oid=%u, lsn=%X/%X",
+				 get_namespace_name(RelationGetNamespace(rel)),
+				 RelationGetRelationName(rel),
+				 RelationGetRelid(rel),
+				 LSN_FORMAT_ARGS(lsn));
+		}
 
 		/* Skip partitioned tables as there is nothing to do */
 		if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
