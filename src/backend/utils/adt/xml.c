@@ -2722,6 +2722,67 @@ escape_xml(const char *str)
 	return buf.data;
 }
 
+/*
+ * Unescape XML escaped characters.
+ *
+ * In order to keep it consistent with "escape_xml(const char*)",
+ * this function intentionally does not depend on libxml2.
+ */
+char *
+unescape_xml(const char *str)
+{
+	StringInfoData buf;
+	size_t p = 0;
+	size_t len;
+
+	if (!str)
+		return NULL;
+
+	len = strlen(str);
+
+	initStringInfo(&buf);
+
+	while (p < len)
+	{
+		if (p + 4 <= len && strncmp(str + p, "&lt;", 4) == 0)
+		{
+			appendStringInfoChar(&buf, '<');
+			p += 4;
+		}
+		else if (p + 4 <= len && strncmp(str + p, "&gt;", 4) == 0)
+		{
+			appendStringInfoChar(&buf, '>');
+			p += 4;
+		}
+		else if (p + 5 <= len && strncmp(str + p, "&amp;", 5) == 0)
+		{
+			appendStringInfoChar(&buf, '&');
+			p += 5;
+		}
+		else if (p + 5 <= len && strncmp(str + p, "&#13;", 5) == 0)
+		{
+			appendStringInfoChar(&buf, '\r');
+			p += 5;
+		}
+		else if (p + 6 <= len && strncmp(str + p, "&quot;", 6) == 0)
+		{
+			appendStringInfoChar(&buf, '"');
+			p += 6;
+		}
+		else if (p + 6 <= len && strncmp(str + p, "&#x0D;", 6) == 0)
+		{
+			appendStringInfoChar(&buf, '\r');
+			p += 6;
+		}
+		else
+		{
+			appendStringInfoChar(&buf, *(str + p));
+			p++;
+		}
+	}
+
+	return buf.data;
+}
 
 static char *
 _SPI_strdup(const char *s)
