@@ -64,4 +64,6 @@ extern void makeAlterConfigCommand(PGconn *conn, const char *configitem,
 								   PQExpBuffer buf);
 extern void create_or_open_dir(const char *dirname);
 
+extern void check_replica_sync(PGconn *conn, char *max_lag_bytes_str);
+
 #endif							/* DUMPUTILS_H */

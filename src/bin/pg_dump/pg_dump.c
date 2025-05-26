@@ -209,6 +209,9 @@ static int	nbinaryUpgradeClassOids = 0;
 static SequenceItem *sequences = NULL;
 static int	nsequences = 0;
 
+static bool ensure_replica_sync = false;
+static char *max_replication_lag = NULL;
+
 /* Maximum number of relations to fetch in a fetchAttributeStats() call. */
 #define MAX_ATTR_STATS_RELS 64
 
@@ -530,7 +533,7 @@ main(int argc, char **argv)
 		{"filter", required_argument, NULL, 16},
 		{"exclude-extension", required_argument, NULL, 17},
 		{"sequence-data", no_argument, &dopt.sequence_data, 1},
-
+		{"max-replication-lag", required_argument, NULL, 25},
 		{NULL, 0, NULL, 0}
 	};
 
@@ -796,6 +799,11 @@ main(int argc, char **argv)
 
 			case 24:
 				with_statistics = true;
+				break;
+
+			case 25:
+				max_replication_lag = pg_strdup(optarg);
+				ensure_replica_sync = true;
 				break;
 
 			default:
@@ -1325,15 +1333,16 @@ help(const char *progname)
 	printf(_("  --with-data                  dump the data\n"));
 	printf(_("  --with-schema                dump the schema\n"));
 	printf(_("  --with-statistics            dump the statistics\n"));
+	printf(_("  --max-replication-lag=SIZE   abort if WAL replay lag exceeds SIZE on the standby \n"));
 
 	printf(_("\nConnection options:\n"));
-	printf(_("  -d, --dbname=DBNAME      database to dump\n"));
-	printf(_("  -h, --host=HOSTNAME      database server host or socket directory\n"));
-	printf(_("  -p, --port=PORT          database server port number\n"));
-	printf(_("  -U, --username=NAME      connect as specified database user\n"));
-	printf(_("  -w, --no-password        never prompt for password\n"));
-	printf(_("  -W, --password           force password prompt (should happen automatically)\n"));
-	printf(_("  --role=ROLENAME          do SET ROLE before dump\n"));
+	printf(_("  -d, --dbname=DBNAME           database to dump\n"));
+	printf(_("  -h, --host=HOSTNAME           database server host or socket directory\n"));
+	printf(_("  -p, --port=PORT               database server port number\n"));
+	printf(_("  -U, --username=NAME           connect as specified database user\n"));
+	printf(_("  -w, --no-password             never prompt for password\n"));
+	printf(_("  -W, --password           	  force password prompt (should happen automatically)\n"));
+	printf(_("  --role=ROLENAME          	  do SET ROLE before dump\n"));
 
 	printf(_("\nIf no database name is supplied, then the PGDATABASE environment\n"
 			 "variable value is used.\n\n"));
@@ -1350,6 +1359,9 @@ setup_connection(Archive *AH, const char *dumpencoding,
 	const char *std_strings;
 
 	PQclear(ExecuteSqlQueryForSingleRow(AH, ALWAYS_SECURE_SEARCH_PATH_SQL));
+
+	if (ensure_replica_sync)
+		check_replica_sync(conn, max_replication_lag);
 
 	/*
 	 * Set the client encoding if requested.

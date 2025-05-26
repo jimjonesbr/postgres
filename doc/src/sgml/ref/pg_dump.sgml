@@ -1467,6 +1467,27 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--max-replication-lag=<replaceable>size</replaceable></option></term>
+      <listitem>
+        <para>
+          Prevent dumping from a standby server if the replication lag exceeds the specified
+          <replaceable>size</replaceable>. The lag is computed as the byte difference between the
+          last WAL received and the last WAL replayed. The <replaceable>size</replaceable>
+          can be specified in human-readable units (e.g., <literal>128MB</literal>, <literal>1GB</literal>).
+        </para>
+        <para>
+          This option ensures that the standby is sufficiently up-to-date with its primary before
+          allowing a logical dump to proceed. If the server is not in recovery mode (i.e., a primary),
+          this check is skipped.
+        </para>
+        <para>
+          This is primarily useful when performing backups from hot standby servers, to avoid
+          capturing inconsistent or stale data due to replication lag.
+        </para>
+      </listitem>
+    </varlistentry>
+
+     <varlistentry>
        <term><option>-?</option></term>
        <term><option>--help</option></term>
        <listitem>

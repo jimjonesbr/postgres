@@ -29,7 +29,8 @@ static bool parseAclItem(const char *item, const char *type,
 static char *dequoteAclUserName(PQExpBuffer output, char *input);
 static void AddAcl(PQExpBuffer aclbuf, const char *keyword,
 				   const char *subname);
-
+void check_replica_sync(PGconn *conn, char *max_lag);
+static const char *get_target_session_attrs(PQconninfoOption *connopts);
 
 /*
  * Build GRANT/REVOKE command(s) for an object.
@@ -919,4 +920,141 @@ create_or_open_dir(const char *dirname)
 			/* exists and is not empty */
 			pg_fatal("directory \"%s\" is not empty", dirname);
 	}
+}
+
+/*
+ * Ensures that the connected PostgreSQL server is a standby with active WAL
+ * streaming and that its replication lag does not exceed a specified threshold.
+ *
+ * If the server is not in recovery mode (i.e., a primary), the function exits
+ * early. If the target_session_attrs setting (e.g., 'prefer-standby') indicates
+ * a preference for standby, and the connection ends up on a primary, a warning
+ * is issued and the lag check is skipped.
+ *
+ * When connected to a standby, this function:
+ *
+ * 1. Verifies that a WAL receiver is active and currently streaming.
+ * 2. Converts the --max-replication-lag value (e.g., '64MB', '1GB') to bytes
+ *    using pg_size_bytes().
+ * 3. Calculates the current WAL lag in bytes using
+ *    pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn()).
+ * 4. Aborts with an error if the computed lag exceeds the user-specified
+ *    threshold.
+ *
+ * Parameters:
+ *   conn     - a valid libpq connection to the server
+ *   max_lag  - a human-readable size string (e.g., '128MB') specifying the
+ *              maximum acceptable WAL lag
+ */
+void check_replica_sync(PGconn *conn, char *max_lag)
+{
+	PGresult *res;
+	char *val;
+	double lag_bytes = 0.0;
+	double max_lag_bytes = 0.0;
+	char query[256];
+	const char *escaped_str;
+	const char *lag_pretty;
+	char *endptr;
+	PQconninfoOption *opts = PQconninfo(conn);
+	const char *tsa = pg_strdup(get_target_session_attrs(opts));
+	const char *host = PQhost(conn);
+	const char *port = PQport(conn);
+
+	PQconninfoFree(opts);
+
+	if (!host || host[0] == '\0' || host[0] == '/')
+		host = "local connection";
+
+	/* Check if the server is in recovery */
+	res = PQexec(conn, "SELECT pg_is_in_recovery()");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		pg_fatal("could not check recovery status: %s", PQerrorMessage(conn));
+
+	/*
+	 * If the current connection is a primary we allow the dump
+	 * to proceed but emit a warning saying the option was ignored.
+	 */
+	if (strcmp(PQgetvalue(res, 0, 0), "f") == 0)
+	{
+		pg_log_warning("--max-replication-lag ignored because \"%s (port %s)\" is not in standby mode", host, port);
+		PQclear(res);
+		return; /* not standby */
+	}
+	PQclear(res);
+
+	/* Check for active WAL receiver connection */
+	res = PQexec(conn, "SELECT status FROM pg_stat_wal_receiver");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		pg_fatal("could not check WAL receiver status: %s", PQerrorMessage(conn));
+
+	if (PQntuples(res) == 0)
+		pg_fatal("standby is not connected to primary (no WAL receiver active)");
+
+	if (strcmp(PQgetvalue(res, 0, 0), "streaming") != 0)
+		pg_fatal("standby is not actively streaming WAL (status: %s)", PQgetvalue(res, 0, 0));
+	PQclear(res);
+
+	/* Parse the max_lag_bytes threshold using pg_size_bytes */
+	escaped_str = PQescapeLiteral(conn, max_lag, strlen(max_lag));
+	if (escaped_str == NULL)
+		pg_fatal("could not escape size string");
+
+	snprintf(query, sizeof(query),
+			 "SELECT pg_size_bytes(%s)", escaped_str);
+	PQfreemem((void *)escaped_str);
+
+	res = PQexec(conn, query);
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		pg_fatal("could not parse replication lag threshold '%s': %s",
+				 max_lag, PQerrorMessage(conn));
+
+	val = PQgetvalue(res, 0, 0);
+	max_lag_bytes = strtod(val, &endptr);
+	if (*endptr != '\0')
+		pg_fatal("could not convert parsed lag threshold to number: '%s'", val);
+	PQclear(res);
+
+	/* Compute WAL lag in bytes */
+	//res = PQexec(conn, "SELECT pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn())");
+	res = PQexec(conn,
+				"SELECT "
+				"pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn()) AS lag_bytes, "
+				"pg_size_pretty(pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn())) AS lag_pretty");
+
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		pg_fatal("could not check replication lag: %s", PQerrorMessage(conn));
+
+	val = PQgetvalue(res, 0, 0);
+	if (val == NULL || val[0] == '\0')
+		pg_fatal("replication lag unknown (pg_wal_lsn_diff returned NULL)");
+
+	lag_bytes = strtod(val, &endptr);
+	lag_pretty = PQgetvalue(res, 0, 1);
+
+	if (*endptr != '\0')
+		pg_fatal("could not parse WAL lag: '%s'", val);
+	PQclear(res);
+
+	if (lag_bytes > max_lag_bytes)
+		pg_fatal("replication lag (%s) exceeds '--max-replication-lag=%s' while connected to standby \"%s (port %s, target_session_attrs=%s)\"",
+				 lag_pretty, max_lag, host, port, tsa);
+}
+
+/*
+ * get_target_session_attrs
+ *
+ * Extracts the value of 'target_session_attrs' from a parsed
+ * PQconninfoOption array. Returns NULL if the option is not present.
+ */
+static const char *
+get_target_session_attrs(PQconninfoOption *connopts)
+{
+	for (PQconninfoOption *opt = connopts; opt && opt->keyword != NULL; opt++)
+	{
+		if (strcmp(opt->keyword, "target_session_attrs") == 0)
+			return opt->val;
+	}
+
+	return NULL;
 }

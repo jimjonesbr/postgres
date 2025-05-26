@@ -116,6 +116,9 @@ static int	on_conflict_do_nothing = 0;
 static int	statistics_only = 0;
 static int	sequence_data = 0;
 
+static bool ensure_replica_sync = false;
+static char *max_replication_lag = NULL;
+
 static char role_catalog[10];
 #define PG_AUTHID "pg_authid"
 #define PG_ROLES  "pg_roles "
@@ -191,6 +194,7 @@ main(int argc, char *argv[])
 		{"statistics-only", no_argument, &statistics_only, 1},
 		{"filter", required_argument, NULL, 8},
 		{"sequence-data", no_argument, &sequence_data, 1},
+		{"max-replication-lag", required_argument, NULL, 9},
 
 		{NULL, 0, NULL, 0}
 	};
@@ -382,6 +386,11 @@ main(int argc, char *argv[])
 				read_dumpall_filters(optarg, &database_exclude_patterns);
 				break;
 
+			case 9:
+				max_replication_lag = pg_strdup(optarg);
+				ensure_replica_sync = true;
+				break;
+
 			default:
 				/* getopt_long already emitted a complaint */
 				pg_log_error_hint("Try \"%s --help\" for more information.", progname);
@@ -570,6 +579,8 @@ main(int argc, char *argv[])
 		}
 	}
 
+	if (ensure_replica_sync)
+		check_replica_sync(conn, max_replication_lag);
 	/*
 	 * Get a list of database names that match the exclude patterns
 	 */
@@ -757,6 +768,7 @@ help(void)
 	printf(_("  --with-data                  dump the data\n"));
 	printf(_("  --with-schema                dump the schema\n"));
 	printf(_("  --with-statistics            dump the statistics\n"));
+	printf(_("  --max-replication-lag=SIZE   abort if WAL replay lag exceeds SIZE on the standby \n"));
 
 	printf(_("\nConnection options:\n"));
 	printf(_("  -d, --dbname=CONNSTR     connect using connection string\n"));
