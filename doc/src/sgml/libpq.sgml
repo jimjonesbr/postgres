@@ -2394,6 +2394,30 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       </listitem>
      </varlistentry>
 
+  <varlistentry id="libpq-connect-max-wal-replay-lag">
+    <term><literal>max_wal_replay_lag</literal></term>
+    <listitem>
+      <para>
+        Specifies the maximum acceptable WAL replay lag when connecting to a standby server.
+        The value must be a size literal such as <literal>100MB</literal> or <literal>1GB</literal>.
+      </para>
+
+      <para>
+        When this parameter is set and the selected host is a standby (i.e., in recovery),
+        <productname>libpq</productname> will query the server's replay lag and reject the connection
+        if the lag exceeds the specified threshold. If the standby is not actively receiving WAL from
+        a primary, the connection is also rejected. If the connection attempt fails for either reason,
+        libpq will try the next host in the list, if any.
+      </para>
+
+      <para>
+        This parameter is silently ignored when connecting to a primary or read-write server.
+      </para>
+    </listitem>
+  </varlistentry>
+
+
+
      <varlistentry id="libpq-connect-load-balance-hosts" xreflabel="load_balance_hosts">
       <term><literal>load_balance_hosts</literal></term>
       <listitem>

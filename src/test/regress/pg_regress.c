@@ -840,6 +840,7 @@ initialize_environment(void)
 		unsetenv("PGSSLROOTCERT");
 		unsetenv("PGSSLSNI");
 		unsetenv("PGTARGETSESSIONATTRS");
+		unsetenv("PGMAXWALREPLAYLAG");
 		unsetenv("PGUSER");
 		/* PGPORT, see below */
 		/* PGHOST, see below */

@@ -379,6 +379,10 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 		"Target-Session-Attrs", "", 15, /* sizeof("prefer-standby") = 15 */
 	offsetof(struct pg_conn, target_session_attrs)},
 
+	{"max_wal_replay_lag", "PGMAXWALREPLAYLAG", NULL, NULL,
+		"Max-WAL-replay-lag", "", 64,
+	offsetof(struct pg_conn, max_wal_replay_lag)},
+
 	{"load_balance_hosts", "PGLOADBALANCEHOSTS",
 		DefaultLoadBalanceHosts, NULL,
 		"Load-Balance-Hosts", "", 8,	/* sizeof("disable") = 8 */
@@ -505,6 +509,7 @@ static bool sslVerifyProtocolVersion(const char *version);
 static bool sslVerifyProtocolRange(const char *min, const char *max);
 static bool pqParseProtocolVersion(const char *value, ProtocolVersion *result, PGconn *conn, const char *context);
 
+static bool standby_replay_lag_is_acceptable(PGconn *conn);
 
 /* global variable because fe-auth.c needs to access it */
 pgthreadlock_t pg_g_threadlock = default_threadlock;
@@ -4378,6 +4383,28 @@ keep_going:						/* We will come back to here until there is
 
 		case CONNECTION_CHECK_TARGET:
 			{
+
+				/*
+				* If the user specified a max WAL replay lag, and did not explicitly request
+				* connection to a primary or read-write server, then ensure the candidate
+				* standby has acceptable replay lag. This prevents connecting to a lagging
+				* standby when read-only access is desired.
+				*
+				* Note: standby_replay_lag_is_acceptable() internally checks whether the server
+				* is in recovery, and skips the lag check entirely for primaries.
+				*/
+				if (conn->max_wal_replay_lag &&
+					(conn->target_server_type != SERVER_TYPE_PRIMARY &&
+					 conn->target_server_type != SERVER_TYPE_READ_WRITE))
+				{
+					conn->status = CONNECTION_OK;
+					if (!standby_replay_lag_is_acceptable(conn))
+					{
+						conn->try_next_host = true;
+						goto keep_going;
+					}
+				}
+
 				/*
 				 * If a read-write, read-only, primary, or standby connection
 				 * is required, see if we have one.
@@ -4991,7 +5018,7 @@ pqMakeEmptyPGconn(void)
 	conn->sock = PGINVALID_SOCKET;
 	conn->altsock = PGINVALID_SOCKET;
 	conn->Pfdebug = NULL;
-
+	conn->max_wal_replay_lag = NULL;
 	/*
 	 * We try to send at least 8K at a time, which is the usual size of pipe
 	 * buffers on Unix systems.  That way, when we are sending a large amount
@@ -8294,4 +8321,116 @@ PQregisterThreadLock(pgthreadlock_t newhandler)
 		pg_g_threadlock = default_threadlock;
 
 	return prev;
+}
+
+/*
+ * Check whether the current server is a standby and, if so, whether its
+ * WAL replay lag is within the acceptable threshold specified by
+ * conn->max_wal_replay_lag.
+ *
+ * The function performs the following checks:
+ * 1. If the server is not in recovery (i.e., it's a primary), the check is skipped
+ *    and the function returns true.
+ * 2. If the server is a standby, it must have an active WAL receiver (i.e., be connected
+ *    to a primary). If not, the function fails.
+ * 3. It then compares the difference between pg_last_wal_receive_lsn() and
+ *    pg_last_wal_replay_lsn() against the user-specified lag threshold.
+ *
+ * If any query fails or the lag exceeds the threshold, a detailed connection
+ * error message is recorded and the function returns false.
+ *
+ * Returns true if the lag is acceptable or the host is not a standby;
+ * false otherwise.
+ */
+static bool
+standby_replay_lag_is_acceptable(PGconn *conn)
+{
+	PGresult *res;
+	PQExpBuffer query = createPQExpBuffer();
+
+	/* check if server is in recovery (i.e., standby) */
+	res = PQexec(conn, "SELECT pg_catalog.pg_is_in_recovery()");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK || PQntuples(res) != 1)
+	{
+		libpq_append_conn_error(conn, "could not determine recovery status: %s",
+								PQresultErrorField(res, PG_DIAG_MESSAGE_PRIMARY));
+		PQclear(res);
+		destroyPQExpBuffer(query);
+		return false;
+	}
+
+	if (strcmp(PQgetvalue(res, 0, 0), "f") == 0) /* not in recovery */
+	{
+		PQclear(res);
+		destroyPQExpBuffer(query);
+		return true; /* if this is not a standby, no need to check replay lag */
+	}
+	PQclear(res);
+
+	/* check for active WAL receiver connection */
+	res = PQexec(conn, "SELECT status FROM pg_catalog.pg_stat_wal_receiver");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+	{
+		libpq_append_conn_error(conn, "could not check WAL receiver status: %s",
+								PQresultErrorField(res, PG_DIAG_MESSAGE_PRIMARY));
+		PQclear(res);
+		destroyPQExpBuffer(query);
+		return false;
+	}
+
+	if (PQntuples(res) == 0)
+	{
+		libpq_append_conn_error(conn, "standby is not connected to primary (no WAL receiver active)");
+		PQclear(res);
+		destroyPQExpBuffer(query);
+		return false;
+	}
+	PQclear(res);
+
+	/*
+	 * here we compute the replay lag and return it also formatted using
+	 * pg_catalog.pg_size_pretty(), in case we need to emit an error message.
+	 */
+	appendPQExpBuffer(query,
+					  "SELECT "
+					  "  replay_lag > pg_catalog.pg_size_bytes('%s'),"
+					  "  pg_catalog.pg_size_bytes('%s') < 0,"
+					  "  pg_catalog.pg_size_pretty(replay_lag)"
+					  "FROM pg_wal_lsn_diff("
+					  "  pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn()) AS replay_lag",
+					  conn->max_wal_replay_lag, conn->max_wal_replay_lag);
+
+	res = PQexec(conn, query->data);
+	destroyPQExpBuffer(query);
+
+	if (PQresultStatus(res) != PGRES_TUPLES_OK || PQntuples(res) != 1 || PQgetisnull(res, 0, 0))
+	{
+		/* add context but avoid repeating the same full message */
+		libpq_append_conn_error(conn, "could not evaluate WAL replay lag");
+		PQclear(res);
+		return false;
+	}
+
+	/* negative thresholds are not allowed */
+	if (strcmp(PQgetvalue(res, 0, 1), "t") == 0)
+	{
+		libpq_append_conn_error(conn, "\"max_wal_replay_lag\" cannot have negative values: %s",
+								conn->max_wal_replay_lag);
+		PQclear(res);
+		return false;
+	}
+
+	/* replay lag too high, so we append the error and return false */
+	if (strcmp(PQgetvalue(res, 0, 0), "t") == 0)
+	{
+		char *lag_pretty = PQgetvalue(res, 0, 2);
+		libpq_append_conn_error(conn,
+								"WAL replay lag on standby is too high: %s (max_wal_replay_lag=%s)",
+								lag_pretty, conn->max_wal_replay_lag);
+		PQclear(res);
+		return false;
+	}
+
+	PQclear(res);
+	return true;
 }
