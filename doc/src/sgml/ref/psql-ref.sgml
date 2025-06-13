@@ -4989,6 +4989,17 @@ testdb=&gt; <userinput>INSERT INTO my_table VALUES (:'content');</userinput>
         </listitem>
       </varlistentry>
 
+      <varlistentry id="app-psql-prompting-i">
+        <term><literal>%i</literal></term>
+        <listitem>
+          <para>
+            The server's role: <literal>standby</literal> if connected to a
+            hot standby, otherwise <literal>primary</literal>. This is determined
+            via the server parameter <literal>in_hot_standby</literal>.
+          </para>
+        </listitem>
+      </varlistentry>
+
       <varlistentry id="app-psql-prompting-x">
         <term><literal>%x</literal></term>
         <listitem>

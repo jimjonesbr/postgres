@@ -243,7 +243,16 @@ get_prompt(promptStatus_t status, ConditionalStack cstack)
 							break;
 					}
 					break;
-
+				case 'i':
+					if (pset.db && PQparameterStatus(pset.db, "in_hot_standby"))
+					{
+						const char *hs = PQparameterStatus(pset.db, "in_hot_standby");
+						if (hs && strcmp(hs, "on") == 0)
+							strlcpy(buf, "standby", sizeof(buf));
+						else
+							strlcpy(buf, "primary", sizeof(buf));
+					}
+					break;
 				case 'x':
 					if (!pset.db)
 						buf[0] = '?';
