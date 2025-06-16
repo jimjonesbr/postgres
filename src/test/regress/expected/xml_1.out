@@ -150,6 +150,195 @@ DETAIL:  This functionality requires the server to be built with libxml support.
 SELECT xmlelement(name foo, xmlattributes('<>&"''' as funny, xml 'b<a/>r' as funnier));
 ERROR:  unsupported XML feature
 DETAIL:  This functionality requires the server to be built with libxml support.
+-- DEFAULT NULL xmlnamespace
+SELECT xmlelement(NAME "root", xmlnamespaces(DEFAULT NULL));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- DEFAULT xmlnamespace
+SELECT xmlelement(NAME "root", xmlnamespaces(DEFAULT 'http:/x.y/ns1'));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- DEFAULT numeric xmlnamespace
+SELECT xmlelement(NAME "root", xmlnamespaces(DEFAULT 42.73));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- DEFAULT empty xmlnamespace
+SELECT xmlelement(NAME "root", xmlnamespaces(DEFAULT ''));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- DEFAULT empty xmlnamespace
+SELECT xmlelement(NAME "root", xmlnamespaces(NO DEFAULT));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- Testing xmlnamespace with subqueries
+SELECT
+  xmlelement(NAME root, xmlnamespaces(DEFAULT 'ns'),
+    (SELECT xmlelement(NAME child1, xmlnamespaces(NO DEFAULT))));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- Testing xmlnamespace url from ColumnRef
+CREATE TABLE xmlns (url text);
+INSERT INTO xmlns VALUES ('http:/x.y/ns1');
+SELECT
+  xmlserialize(DOCUMENT
+  xmlelement(NAME root, xmlnamespaces(DEFAULT 'foo', url AS ns),
+    xmlelement(NAME root,
+      xmlelement(NAME child2, xmlnamespaces(url AS ns, NO DEFAULT))))
+  AS text INDENT)
+FROM xmlns;
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- NULL xmlnamespace uri
+SELECT xmlelement(NAME "root", xmlnamespaces(NULL AS ns));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- empty xmlelement containing one namespace
+SELECT xmlelement(NAME "root", xmlnamespaces('http:/x.y/ns1' AS ns1));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- empty xmlelement with DEFAULT and regular xmlnamespaces
+SELECT xmlelement(NAME "root", xmlnamespaces(DEFAULT 'http:/x.y/ns1', 'http:/x.y/ns2' AS ns2));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- xmlelement containing a namespace and a text node
+SELECT xmlelement(NAME "root", xmlnamespaces('http:/x.y/ns1' AS ns1), 'text node');
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- empty xmlelement containing a) xmlnamespace and b) xmlattribute
+SELECT xmlelement(NAME "root", xmlnamespaces('http:/x.y/ns1' AS ns1), xmlattributes('val' AS att));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- empty xmlelement containing a) xmlattribute and b) xmlnamespace
+SELECT xmlelement(NAME "root", xmlattributes('val' AS att), xmlnamespaces('http:/x.y/ns1' AS ns1));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- empty xmlelement containing two xmlnamespaces
+SELECT xmlelement(NAME "root", xmlnamespaces('http:/x.y/ns1' AS ns1, 'http:/x.y/ns2' AS ns2));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- empty xmlelement containing two xmlnamespaces and one xmlattribute
+SELECT xmlelement(NAME "root", xmlnamespaces('http:/x.y/ns1' AS ns1, 'http:/x.y/ns2' AS ns2), xmlattributes('val' AS att));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- xmlelement containing two xmlnamespaces, one xmlattribute,
+-- and a text node.
+SELECT xmlelement(NAME "root", xmlnamespaces('http:/x.y/ns1' AS ns1, 'http:/x.y/ns2' AS ns2), xmlattributes('val' AS att), 'text node');
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- empty root xmlelement containing one xmlnamespace, one xmlattribute,
+-- and one xmlelement child (ns1:foo).
+-- empty xmlelement child "ns1:foo" containing one xmlnamespace and one
+-- xmlelement child (ns2:bar).
+-- xmlelement child "ns2:bar" containing a text node.
+SELECT
+  xmlelement(NAME "root",
+    xmlnamespaces('http:/x.y/ns1' AS ns1),
+    xmlattributes('val' AS att),
+    xmlelement(NAME "ns1:foo",
+      xmlnamespaces('http:/x.y/ns2' AS ns2),
+      xmlelement(NAME "ns2:bar", 'text node'))
+  );
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- empty root xmlelement containing one xmlnamespace, one xmlattribute,
+-- and one xmlelement child (ns1:foo).
+-- xmlelement child "ns1:foo" containing one xmlnamespace, one xmlelement
+-- child (ns2:bar), and a text node.
+-- xmlelement child "ns2:bar" containing a text node.
+SELECT
+  xmlelement(NAME "root",
+    xmlnamespaces('http:/x.y/ns1' AS ns1),
+    xmlattributes('val' AS att),
+    xmlelement(NAME "ns1:foo",
+      xmlnamespaces('http:/x.y/ns2' AS ns2),
+      xmlelement(NAME "ns2:bar", 'text node'),
+      'mixed content')
+  );
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- empty root xmlelement containing one DEFAULT xmlnamespace, one xmlattribute,
+-- and one xmlelement child (foo).
+-- xmlelement child "foo" containing one NO DEFAULT xmlnamespace and a text node.
+SELECT
+  xmlelement(NAME "root",
+    xmlnamespaces(DEFAULT 'http:/x.y/ns1'),
+    xmlattributes('val' AS att),
+    xmlelement(NAME "foo",
+      xmlnamespaces(NO DEFAULT),'bar')
+  );
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- empty root xmlelement containing one xmlattribute, one xmlnamespace,
+-- three child nodes generated by xmlforest and xmltext, one xmlcomment,
+-- and a text node generated by xmlconcat.
+SELECT
+  xmlelement(NAME "root",
+    xmlattributes(73 AS att),
+    xmlnamespaces('http:/x.y/ns1' AS ns),
+    xmlforest(true AS "ns:x", 42 AS "ns:y", xmltext('<&>') AS "ns:z"),
+    xmlcomment(':)'),
+    xmlconcat('foo', 'bar')
+  );
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- test xmlnamespaces within views
+CREATE VIEW view_xmlnamespaces AS
+SELECT
+  xmlelement(NAME "root",
+    xmlnamespaces('http:/x.y/ns1' AS ns1, DEFAULT 'http:/x.y/def'), xmlattributes('val' AS att),
+    xmlelement(NAME "child1", xmlnamespaces('http:/x.y/ns2' AS ns2, NO DEFAULT)),
+    xmlcomment(':)'),
+    xmlconcat('foo', 'bar'),
+    xmlelement(NAME "child2", xmlnamespaces(DEFAULT NULL))) AS xmldoc;
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+SELECT * FROM view_xmlnamespaces;
+ERROR:  relation "view_xmlnamespaces" does not exist
+LINE 1: SELECT * FROM view_xmlnamespaces;
+                      ^
+\sv view_xmlnamespaces
+ERROR:  relation "view_xmlnamespaces" does not exist
+\set VERBOSITY terse
+-- duplicate xmlnamespace entry (ns1)
+SELECT xmlelement(NAME "root", xmlnamespaces('http:/x.y/ns1' AS ns1, 'http:/x.y/ns1' AS ns1));
+ERROR:  unsupported XML feature
+-- invalid xmlnamespace syntax
+SELECT xmlelement(NAME "root", xmlnamespaces('invalid'));
+ERROR:  syntax error at or near ")" at character 55
+-- multiple DEFAULT xmlnamespaces
+SELECT xmlelement(NAME "root", xmlnamespaces(DEFAULT 'http:/x.y/ns1', DEFAULT 'http:/x.y/ns2'));
+ERROR:  unsupported XML feature
+-- multiple NO DEFAULT xmlnamespaces
+SELECT xmlelement(NAME "root", xmlnamespaces(NO DEFAULT, NO DEFAULT));
+ERROR:  unsupported XML feature
+-- invalid xmlnamespace prefix (xmlns)
+SELECT xmlelement(NAME "root", xmlnamespaces('http:/x.y/ns1' AS xmlns));
+ERROR:  unsupported XML feature
+-- invalid xmlnamespace prefix (xml)
+SELECT xmlelement(NAME "root", xmlnamespaces('http:/x.y/ns1' AS xml));
+ERROR:  unsupported XML feature
+-- duplicate xmlnamespace calls
+SELECT xmlelement(NAME "root", xmlnamespaces('http:/x.y/ns1' AS ns1), xmlnamespaces('http:/x.y/ns2' AS ns2));
+ERROR:  duplicate XMLNAMESACES specified at character 71
+\set VERBOSITY default
+-- invalid xmlnamespaces URIs
+SELECT xmlelement(NAME "root", xmlnamespaces('http://www.w3.org/2000/xmlns/' AS bar));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+SELECT xmlelement(NAME "root", xmlnamespaces('http://www.w3.org/XML/1998/namespace' AS bar));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- invalid DEFAULT xmlnamespace URIs
+SELECT xmlelement(NAME "root", xmlnamespaces(DEFAULT 'http://www.w3.org/2000/xmlns/'));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+SELECT xmlelement(NAME "root", xmlnamespaces(DEFAULT 'http://www.w3.org/XML/1998/namespace'));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- empty xmlnamespace uri
+SELECT xmlelement(NAME "root", xmlnamespaces('' AS ns));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
 SELECT xmlparse(content '');
 ERROR:  unsupported XML feature
 DETAIL:  This functionality requires the server to be built with libxml support.
@@ -1075,6 +1264,14 @@ LINE 1: SELECT * FROM xmltableview2;
 \sv xmltableview2
 ERROR:  relation "xmltableview2" does not exist
 SELECT * FROM XMLTABLE(XMLNAMESPACES(DEFAULT 'http://x.y'),
+                      '/rows/row'
+                      PASSING '<rows xmlns="http://x.y"><row><a>10</a></row></rows>'
+                      COLUMNS a int PATH 'a');
+ERROR:  unsupported XML feature
+LINE 3:                       PASSING '<rows xmlns="http://x.y"><row...
+                                      ^
+DETAIL:  This functionality requires the server to be built with libxml support.
+SELECT * FROM XMLTABLE(XMLNAMESPACES(NO DEFAULT),
                       '/rows/row'
                       PASSING '<rows xmlns="http://x.y"><row><a>10</a></row></rows>'
                       COLUMNS a int PATH 'a');
