@@ -1496,3 +1496,50 @@ ERROR:  unsupported XML feature
 LINE 1: SELECT xmltext('x'|| '<P>73</P>'::xml || .42 || true || 'j':...
                              ^
 DETAIL:  This functionality requires the server to be built with libxml support.
+SELECT
+  xmldocument(
+    xmlelement(NAME root,
+      xmlattributes(42 AS att),
+      xmlcomment('comment'),
+      xmlelement(NAME foo,'<foo&bar>'),
+      xmlelement(NAME bar, xmlconcat('va', 'lue')),
+      xmlpi(name pi),
+      xmlelement(NAME txt, xmltext('<"&>'))
+    )
+  );
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+SELECT xmldocument(NULL);
+ xmldocument 
+-------------
+ 
+(1 row)
+
+SELECT xmldocument('<foo>bar</foo>'::xml);
+ERROR:  unsupported XML feature
+LINE 1: SELECT xmldocument('<foo>bar</foo>'::xml);
+                           ^
+DETAIL:  This functionality requires the server to be built with libxml support.
+SELECT xmldocument('foo'::xml);
+ERROR:  unsupported XML feature
+LINE 1: SELECT xmldocument('foo'::xml);
+                           ^
+DETAIL:  This functionality requires the server to be built with libxml support.
+SELECT xmldocument('foo');
+ERROR:  unsupported XML feature
+LINE 1: SELECT xmldocument('foo');
+                           ^
+DETAIL:  This functionality requires the server to be built with libxml support.
+SELECT xmldocument('');
+ERROR:  unsupported XML feature
+LINE 1: SELECT xmldocument('');
+                           ^
+DETAIL:  This functionality requires the server to be built with libxml support.
+SELECT xmldocument(' ');
+ERROR:  unsupported XML feature
+LINE 1: SELECT xmldocument(' ');
+                           ^
+DETAIL:  This functionality requires the server to be built with libxml support.
+SELECT xmldocument(xmlcomment('comment'));
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
