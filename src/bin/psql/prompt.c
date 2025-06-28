@@ -243,7 +243,21 @@ get_prompt(promptStatus_t status, ConditionalStack cstack)
 							break;
 					}
 					break;
+				case 'i':
+					if (pset.db)
+					{
+						const char *hs = PQparameterStatus(pset.db, "in_hot_standby");
+						const char *ro = PQparameterStatus(pset.db, "default_transaction_read_only");
 
+						if ((hs && strcmp(hs, "on") == 0) ||
+							(ro && strcmp(ro, "on") == 0))
+							strlcpy(buf, "read-only", sizeof(buf));
+						else
+							strlcpy(buf, "read/write", sizeof(buf));
+					}
+					else
+						buf[0] = '\0';
+					break;
 				case 'x':
 					if (!pset.db)
 						buf[0] = '?';

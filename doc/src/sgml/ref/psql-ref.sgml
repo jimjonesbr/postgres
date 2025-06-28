@@ -4999,6 +4999,21 @@ testdb=&gt; <userinput>INSERT INTO my_table VALUES (:'content');</userinput>
         </listitem>
       </varlistentry>
 
+      <varlistentry id="app-psql-prompting-i">
+        <term><literal>%i</literal></term>
+        <listitem>
+          <para>
+            Indicates whether the current session is read-only. The value is
+           shown as <literal>read-only</literal> if the server reports either
+            <literal>in_hot_standby</literal> or
+            <literal>default_transaction_read_only</literal> as <literal>on</literal>,
+            and <literal>read/write</literal> otherwise.
+            This prompt escape can be used to quickly identify sessions that
+            cannot perform write operations.
+          </para>
+        </listitem>
+      </varlistentry>
+
       <varlistentry id="app-psql-prompting-x">
         <term><literal>%x</literal></term>
         <listitem>
