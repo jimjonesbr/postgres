@@ -59,6 +59,12 @@ XmlPGetDatum(const xmltype *X)
 	return PointerGetDatum(X);
 }
 
+/* reserved prefixes and URIs for XMLNamespace() from SQL/XML:2023, 11.2 */
+#define NAMESPACE_XMLNS "http://www.w3.org/2000/xmlns/"
+#define NAMESPACE_XML "http://www.w3.org/XML/1998/namespace"
+#define NAMESPACE_XMLNS_DEFAULT_PREFIX "xmlns"
+#define NAMESPACE_XML_DEFAULT_PREFIX "xml"
+
 #define PG_GETARG_XML_P(n)	DatumGetXmlP(PG_GETARG_DATUM(n))
 #define PG_RETURN_XML_P(x)	PG_RETURN_POINTER(x)
 

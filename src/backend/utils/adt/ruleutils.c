@@ -10066,6 +10066,7 @@ get_rule_expr(Node *node, deparse_context *context,
 				bool		needcomma = false;
 				ListCell   *arg;
 				ListCell   *narg;
+				ListCell   *nsarg;
 				Const	   *con;
 
 				switch (xexpr->op)
@@ -10109,26 +10110,84 @@ get_rule_expr(Node *node, deparse_context *context,
 				}
 				if (xexpr->named_args)
 				{
-					if (xexpr->op != IS_XMLFOREST)
+					bool hasFunctCall = false;
+
+					forthree(arg, xexpr->named_args, narg, xexpr->arg_names, nsarg, xexpr->xmlnamespaces)
 					{
-						if (needcomma)
-							appendStringInfoString(buf, ", ");
-						appendStringInfoString(buf, "XMLATTRIBUTES(");
-						needcomma = false;
-					}
-					forboth(arg, xexpr->named_args, narg, xexpr->arg_names)
-					{
-						Node	   *e = (Node *) lfirst(arg);
-						char	   *argname = strVal(lfirst(narg));
+						Node *e = (Node *)lfirst(arg);
+						char *argname = strVal(lfirst(narg));
+						char *prefix = strVal(lfirst(nsarg));
+
+						/* we skip this entry, as it is not a XMLATTRIBUTES argument */
+						if (strlen(prefix) != 0)
+							continue;
+
+						if (!hasFunctCall)
+						{
+							if (xexpr->op != IS_XMLFOREST)
+							{
+								if (needcomma)
+									appendStringInfoString(buf, ", ");
+								appendStringInfoString(buf, "XMLATTRIBUTES(");
+								needcomma = false;
+							}
+
+							hasFunctCall = true;
+						}
 
 						if (needcomma)
 							appendStringInfoString(buf, ", ");
-						get_rule_expr((Node *) e, context, true);
+
+						get_rule_expr((Node *)e, context, true);
 						appendStringInfo(buf, " AS %s",
 										 quote_identifier(map_xml_name_to_sql_identifier(argname)));
 						needcomma = true;
 					}
-					if (xexpr->op != IS_XMLFOREST)
+					if (xexpr->op != IS_XMLFOREST && hasFunctCall)
+						appendStringInfoChar(buf, ')');
+
+					hasFunctCall = false;
+
+					forthree(arg, xexpr->named_args, narg, xexpr->arg_names, nsarg, xexpr->xmlnamespaces)
+					{
+						Node *e = (Node *)lfirst(arg);
+						char *argname = strVal(lfirst(narg));
+						char *prefix = strVal(lfirst(nsarg));
+
+						/* we skip this entry, as it is not a XMLNAMESPACES argument */
+						if (strlen(prefix) == 0)
+							continue;
+
+						if (!hasFunctCall)
+						{
+							if (xexpr->op != IS_XMLFOREST)
+							{
+								if (needcomma)
+									appendStringInfoString(buf, ", ");
+								appendStringInfoString(buf, "XMLNAMESPACES(");
+								needcomma = false;
+							}
+
+							hasFunctCall = true;
+						}
+
+						if (needcomma)
+							appendStringInfoString(buf, ", ");
+
+						if (strlen(argname) == 0)
+						{
+							appendStringInfo(buf, "DEFAULT ");
+							get_rule_expr((Node *)e, context, true);
+						}
+						else
+						{
+							get_rule_expr((Node *)e, context, true);
+							appendStringInfo(buf, " AS %s",
+											 quote_identifier(map_xml_name_to_sql_identifier(argname)));
+						}
+						needcomma = true;
+					}
+					if (xexpr->op != IS_XMLFOREST && hasFunctCall)
 						appendStringInfoChar(buf, ')');
 				}
 				if (xexpr->args)

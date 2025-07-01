@@ -1589,7 +1589,7 @@ typedef struct SQLValueFunction
 typedef enum XmlExprOp
 {
 	IS_XMLCONCAT,				/* XMLCONCAT(args) */
-	IS_XMLELEMENT,				/* XMLELEMENT(name, xml_attributes, args) */
+	IS_XMLELEMENT,				/* XMLELEMENT(name, xml_attributes, xml_namespaces, args) */
 	IS_XMLFOREST,				/* XMLFOREST(xml_attributes) */
 	IS_XMLPARSE,				/* XMLPARSE(text, is_doc, preserve_ws) */
 	IS_XMLPI,					/* XMLPI(name [, args]) */
@@ -1613,6 +1613,8 @@ typedef struct XmlExpr
 	char	   *name pg_node_attr(query_jumble_ignore);
 	/* non-XML expressions for xml_attributes */
 	List	   *named_args;
+	/* non-XML expressions for XMLNAMESPACES */
+	List	   *xmlnamespaces;
 	/* parallel list of String values */
 	List	   *arg_names pg_node_attr(query_jumble_ignore);
 	/* list of expressions */
