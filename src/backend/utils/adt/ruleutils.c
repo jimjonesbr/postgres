@@ -10208,6 +10208,15 @@ get_rule_expr(Node *node, deparse_context *context,
 					appendStringInfo(buf, " AS %s",
 									 format_type_with_typemod(xexpr->type,
 															  xexpr->typmod));
+
+					if (xexpr->version)
+						appendStringInfo(buf, " VERSION '%s'", xexpr->version);
+
+					if (xexpr->xmldeclaration == XMLSERIALIZE_INCLUDING_XMLDECLARATION)
+						appendStringInfoString(buf, " INCLUDING XMLDECLARATION");
+					else if (xexpr->xmldeclaration == XMLSERIALIZE_EXCLUDING_XMLDECLARATION)
+						appendStringInfoString(buf, " EXCLUDING XMLDECLARATION");
+
 					if (xexpr->indent)
 						appendStringInfoString(buf, " INDENT");
 					else
