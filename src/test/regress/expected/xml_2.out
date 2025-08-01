@@ -2,6 +2,13 @@ CREATE TABLE xmltest (
     id int,
     data xml
 );
+-- Show current setting for xml_enable_huge_parsing
+SHOW xml_enable_huge_parsing;
+ xml_enable_huge_parsing 
+-------------------------
+ off
+(1 row)
+
 INSERT INTO xmltest VALUES (1, '<value>one</value>');
 INSERT INTO xmltest VALUES (2, '<value>two</value>');
 INSERT INTO xmltest VALUES (3, '<wrong');

@@ -619,6 +619,8 @@ static int	num_os_semaphores;
 static bool data_checksums;
 static bool integer_datetimes;
 
+bool xml_enable_huge_parsing = false;
+
 #ifdef USE_ASSERT_CHECKING
 #define DEFAULT_ASSERT_ENABLED true
 #else
@@ -2140,6 +2142,17 @@ struct config_bool ConfigureNamesBool[] =
 		},
 		&vacuum_truncate,
 		true,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"xml_enable_huge_parsing", PGC_SU_BACKEND, RESOURCES_MEM,
+			gettext_noop("Allows XML parsing with support for huge text nodes (up to 1GB)."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&xml_enable_huge_parsing,
+		false,
 		NULL, NULL, NULL
 	},
 

@@ -1823,6 +1823,7 @@ xml_parse(text *data, XmlOptionType xmloption_arg,
 	PG_TRY();
 	{
 		bool		parse_as_document = false;
+		int			options;
 		int			res_code;
 		size_t		count = 0;
 		xmlChar    *version = NULL;
@@ -1853,6 +1854,19 @@ xml_parse(text *data, XmlOptionType xmloption_arg,
 				parse_as_document = true;
 		}
 
+		/*
+		 * Select parse options.
+		 *
+		 * Note that here we try to apply DTD defaults (XML_PARSE_DTDATTR)
+		 * according to SQL/XML:2008 GR 10.16.7.d: 'Default values defined
+		 * by internal DTD are applied'.  As for external DTDs, we try to
+		 * support them too (see SQL/XML:2008 GR 10.16.7.e), but that
+		 * doesn't really happen because xmlPgEntityLoader prevents it.
+		 */
+		options = XML_PARSE_NOENT | XML_PARSE_DTDATTR
+			| (preserve_whitespace ? 0 : XML_PARSE_NOBLANKS)
+			| (xml_enable_huge_parsing ? XML_PARSE_HUGE : 0);
+
 		/* initialize output parameters */
 		if (parsed_xmloptiontype != NULL)
 			*parsed_xmloptiontype = parse_as_document ? XMLOPTION_DOCUMENT :
@@ -1862,25 +1876,11 @@ xml_parse(text *data, XmlOptionType xmloption_arg,
 
 		if (parse_as_document)
 		{
-			int			options;
-
 			/* set up parser context used by xmlCtxtReadDoc */
 			ctxt = xmlNewParserCtxt();
 			if (ctxt == NULL || xmlerrcxt->err_occurred)
 				xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
 							"could not allocate parser context");
-
-			/*
-			 * Select parse options.
-			 *
-			 * Note that here we try to apply DTD defaults (XML_PARSE_DTDATTR)
-			 * according to SQL/XML:2008 GR 10.16.7.d: 'Default values defined
-			 * by internal DTD are applied'.  As for external DTDs, we try to
-			 * support them too (see SQL/XML:2008 GR 10.16.7.e), but that
-			 * doesn't really happen because xmlPgEntityLoader prevents it.
-			 */
-			options = XML_PARSE_NOENT | XML_PARSE_DTDATTR
-				| (preserve_whitespace ? 0 : XML_PARSE_NOBLANKS);
 
 			doc = xmlCtxtReadDoc(ctxt, utf8string,
 								 NULL,	/* no URL */
@@ -1903,6 +1903,8 @@ xml_parse(text *data, XmlOptionType xmloption_arg,
 		}
 		else
 		{
+			xmlNodePtr	root;
+
 			/* set up document that xmlParseBalancedChunkMemory will add to */
 			doc = xmlNewDoc(version);
 			if (doc == NULL || xmlerrcxt->err_occurred)
@@ -1919,19 +1921,40 @@ xml_parse(text *data, XmlOptionType xmloption_arg,
 			/* set parse options --- have to do this the ugly way */
 			save_keep_blanks = xmlKeepBlanksDefault(preserve_whitespace ? 1 : 0);
 
+			root = xmlNewNode(NULL, (const xmlChar *)"content-root");
+
+			if (root == NULL || xmlerrcxt->err_occurred)
+				xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
+							"could not allocate xml node");
+
+			/* This attaches root to doc, so we need not free it separately. */
+			xmlDocSetRootElement(doc, root);
+
 			/* allow empty content */
 			if (*(utf8string + count))
 			{
-				res_code = xmlParseBalancedChunkMemory(doc, NULL, NULL, 0,
-													   utf8string + count,
-													   parsed_nodes);
-				if (res_code != 0 || xmlerrcxt->err_occurred)
+				xmlNodePtr	node_list = NULL;
+				xmlParserErrors res;
+
+				res = xmlParseInNodeContext(root,
+											(char *)utf8string + count,
+											strlen((char *)utf8string + count),
+											options,
+											&node_list);
+
+				if (res != XML_ERR_OK || xmlerrcxt->err_occurred)
 				{
+					xmlFreeNodeList(node_list);
 					xml_errsave(escontext, xmlerrcxt,
 								ERRCODE_INVALID_XML_CONTENT,
 								"invalid XML content");
 					goto fail;
 				}
+
+				if (parsed_nodes != NULL)
+					*parsed_nodes = node_list;
+				else
+					xmlFreeNodeList(node_list);
 			}
 		}
 

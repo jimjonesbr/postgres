@@ -10339,6 +10339,33 @@ SET XML OPTION { DOCUMENT | CONTENT };
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-xml_enable_huge_parsing" xreflabel="xml_enable_huge_parsing">
+      <term>
+        <varname>xml_enable_huge_parsing</varname> (<type>boolean</type>)
+        <indexterm>
+          <primary><varname>xml_enable_huge_parsing</varname> configuration parameter</primary>
+        </indexterm>
+      </term>
+        <listitem>
+          <para>
+            Enables the <literal>XML_PARSE_HUGE</literal> flag in libxml2, allowing parsing of
+            XML content with text nodes up to 1GB (default limit is 10MB).
+          </para>
+          <para>
+            This is useful for processing extremely large XML payloads but comes with
+            significant risks. Enabling this option disables internal libxml2 limits on entity
+            expansion and DTD sizes, which can lead to excessive memory or CPU usage, potentially
+            causing resource exhaustion. Therefore, this setting should only be enabled when
+            parsing XML from trusted sources. Users are advised to monitor server resource usage
+            and thoroughly test with large or
+            complex XML inputs before enabling this option in production.
+           </para>
+           <para>
+            This setting requires a server restart to take effect and can only be changed by a superuser.
+          </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-gin-pending-list-limit" xreflabel="gin_pending_list_limit">
       <term><varname>gin_pending_list_limit</varname> (<type>integer</type>)
       <indexterm>
