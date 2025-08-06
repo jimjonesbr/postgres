@@ -268,6 +268,12 @@ CREATE OR REPLACE FUNCTION xpath_exists(text, xml)
  IMMUTABLE PARALLEL SAFE STRICT COST 1
 RETURN xpath_exists($1, $2, '{}'::text[]);
 
+CREATE OR REPLACE FUNCTION xmlcanonicalize(xml, boolean DEFAULT true)
+ RETURNS xml
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS 'xmlcanonicalize';
+
 CREATE OR REPLACE FUNCTION pg_sleep_for(interval)
  RETURNS void
  LANGUAGE sql
