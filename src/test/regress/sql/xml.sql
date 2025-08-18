@@ -679,3 +679,37 @@ SELECT xmltext('  ');
 SELECT xmltext('foo `$_-+?=*^%!|/\()[]{}');
 SELECT xmltext('foo & <"bar">');
 SELECT xmltext('x'|| '<P>73</P>'::xml || .42 || true || 'j'::char);
+
+
+CREATE ROLE u1 LOGIN;
+-- Cannot change this setting as a non-superuser
+SET ROLE u1;
+SET xml_parse_huge TO on;
+ALTER SYSTEM SET xml_parse_huge TO on;
+SHOW xml_parse_huge;
+
+-- Back to superuser
+RESET ROLE;
+
+-- Granting pg_xml_parse_huge to u1
+GRANT pg_xml_parse_huge TO u1;
+
+-- Previously this failed, but now it should work:
+SET ROLE u1;
+SET xml_parse_huge TO on;
+SHOW xml_parse_huge;
+CREATE TABLE t1 AS SELECT ('<root>' || repeat('X',10000001) || '</root>')::xml;
+
+-- disabling xml_parse_huge should prevent parsing large XML documents
+SET xml_parse_huge TO off;
+\set VERBOSITY terse
+CREATE TABLE t2 AS SELECT ('<root>' || repeat('X',10000001) || '</root>')::xml;
+\set VERBOSITY default
+
+-- Back to superuser
+RESET ROLE;
+
+-- Cleanup
+RESET ROLE;
+DROP TABLE t1;
+DROP ROLE u1;

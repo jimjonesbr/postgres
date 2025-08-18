@@ -1496,3 +1496,46 @@ ERROR:  unsupported XML feature
 LINE 1: SELECT xmltext('x'|| '<P>73</P>'::xml || .42 || true || 'j':...
                              ^
 DETAIL:  This functionality requires the server to be built with libxml support.
+CREATE ROLE u1 LOGIN;
+-- Cannot change this setting as a non-superuser
+SET ROLE u1;
+SET xml_parse_huge TO on;
+ERROR:  permission denied to set parameter "xml_parse_huge"
+HINT:  You must be a superuser or a member of the "pg_xml_parse_huge" role to set this option.
+ALTER SYSTEM SET xml_parse_huge TO on;
+ERROR:  permission denied to set parameter "xml_parse_huge"
+SHOW xml_parse_huge;
+ xml_parse_huge 
+----------------
+ off
+(1 row)
+
+-- Back to superuser
+RESET ROLE;
+-- Granting pg_xml_parse_huge to u1
+GRANT pg_xml_parse_huge TO u1;
+-- Previously this failed, but now it should work:
+SET ROLE u1;
+SET xml_parse_huge TO on;
+SHOW xml_parse_huge;
+ xml_parse_huge 
+----------------
+ on
+(1 row)
+
+CREATE TABLE t1 AS SELECT ('<root>' || repeat('X',10000001) || '</root>')::xml;
+ERROR:  unsupported XML feature
+DETAIL:  This functionality requires the server to be built with libxml support.
+-- disabling xml_parse_huge should prevent parsing large XML documents
+SET xml_parse_huge TO off;
+\set VERBOSITY terse
+CREATE TABLE t2 AS SELECT ('<root>' || repeat('X',10000001) || '</root>')::xml;
+ERROR:  unsupported XML feature
+\set VERBOSITY default
+-- Back to superuser
+RESET ROLE;
+-- Cleanup
+RESET ROLE;
+DROP TABLE t1;
+ERROR:  table "t1" does not exist
+DROP ROLE u1;

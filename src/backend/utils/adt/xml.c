@@ -84,6 +84,7 @@
 #include "catalog/namespace.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_authid.h"
 #include "commands/dbcommands.h"
 #include "executor/spi.h"
 #include "executor/tablefunc.h"
@@ -95,10 +96,12 @@
 #include "nodes/execnodes.h"
 #include "nodes/miscnodes.h"
 #include "nodes/nodeFuncs.h"
+#include "utils/acl.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/date.h"
 #include "utils/datetime.h"
+#include "utils/guc_hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
@@ -108,6 +111,7 @@
 /* GUC variables */
 int			xmlbinary = XMLBINARY_BASE64;
 int			xmloption = XMLOPTION_CONTENT;
+bool		xml_parse_huge = false;
 
 #ifdef USE_LIBXML
 
@@ -1769,7 +1773,7 @@ xml_doctype_in_content(const xmlChar *str)
  * xmloption_arg, but a DOCTYPE node in the input can force DOCUMENT mode).
  *
  * If parsed_nodes isn't NULL and we parse in CONTENT mode, the list
- * of parsed nodes from the xmlParseBalancedChunkMemory call will be returned
+ * of parsed nodes from the xmlParseInNodeContext call will be returned
  * to *parsed_nodes.  (It is caller's responsibility to free that.)
  *
  * Errors normally result in ereport(ERROR), but if escontext is an
@@ -1795,7 +1799,6 @@ xml_parse(text *data, XmlOptionType xmloption_arg,
 	PgXmlErrorContext *xmlerrcxt;
 	volatile xmlParserCtxtPtr ctxt = NULL;
 	volatile xmlDocPtr doc = NULL;
-	volatile int save_keep_blanks = -1;
 
 	/*
 	 * This step looks annoyingly redundant, but we must do it to have a
@@ -1823,6 +1826,7 @@ xml_parse(text *data, XmlOptionType xmloption_arg,
 	PG_TRY();
 	{
 		bool		parse_as_document = false;
+		int			options;
 		int			res_code;
 		size_t		count = 0;
 		xmlChar    *version = NULL;
@@ -1853,6 +1857,25 @@ xml_parse(text *data, XmlOptionType xmloption_arg,
 				parse_as_document = true;
 		}
 
+		/*
+		 * Select parse options.
+		 *
+		 * Note that here we try to apply DTD defaults (XML_PARSE_DTDATTR)
+		 * according to SQL/XML:2008 GR 10.16.7.d: 'Default values defined by
+		 * internal DTD are applied'.  As for external DTDs, we try to support
+		 * them too (see SQL/XML:2008 GR 10.16.7.e), but that doesn't really
+		 * happen because xmlPgEntityLoader prevents it.
+		 *
+		 * Enable XML_PARSE_HUGE if xml_parse_huge is set. This option is
+		 * restricted: only superusers or members of pg_xml_parse_huge can
+		 * turn it on. It relaxes some internal libxml2 limits (e.g. maximum
+		 * size and depth), so enabling it may allow parsing of much larger
+		 * documents but also increases resource usage risks.
+		 */
+		options = XML_PARSE_NOENT | XML_PARSE_DTDATTR
+			| (preserve_whitespace ? 0 : XML_PARSE_NOBLANKS)
+			| (xml_parse_huge ? XML_PARSE_HUGE : 0);
+
 		/* initialize output parameters */
 		if (parsed_xmloptiontype != NULL)
 			*parsed_xmloptiontype = parse_as_document ? XMLOPTION_DOCUMENT :
@@ -1862,25 +1885,11 @@ xml_parse(text *data, XmlOptionType xmloption_arg,
 
 		if (parse_as_document)
 		{
-			int			options;
-
 			/* set up parser context used by xmlCtxtReadDoc */
 			ctxt = xmlNewParserCtxt();
 			if (ctxt == NULL || xmlerrcxt->err_occurred)
 				xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
 							"could not allocate parser context");
-
-			/*
-			 * Select parse options.
-			 *
-			 * Note that here we try to apply DTD defaults (XML_PARSE_DTDATTR)
-			 * according to SQL/XML:2008 GR 10.16.7.d: 'Default values defined
-			 * by internal DTD are applied'.  As for external DTDs, we try to
-			 * support them too (see SQL/XML:2008 GR 10.16.7.e), but that
-			 * doesn't really happen because xmlPgEntityLoader prevents it.
-			 */
-			options = XML_PARSE_NOENT | XML_PARSE_DTDATTR
-				| (preserve_whitespace ? 0 : XML_PARSE_NOBLANKS);
 
 			doc = xmlCtxtReadDoc(ctxt, utf8string,
 								 NULL,	/* no URL */
@@ -1903,7 +1912,9 @@ xml_parse(text *data, XmlOptionType xmloption_arg,
 		}
 		else
 		{
-			/* set up document that xmlParseBalancedChunkMemory will add to */
+			xmlNodePtr	root;
+
+			/* set up document that xmlParseInNodeContext will add to */
 			doc = xmlNewDoc(version);
 			if (doc == NULL || xmlerrcxt->err_occurred)
 				xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
@@ -1916,22 +1927,40 @@ xml_parse(text *data, XmlOptionType xmloption_arg,
 							"could not allocate XML document");
 			doc->standalone = standalone;
 
-			/* set parse options --- have to do this the ugly way */
-			save_keep_blanks = xmlKeepBlanksDefault(preserve_whitespace ? 1 : 0);
+			root = xmlNewNode(NULL, (const xmlChar *) "content-root");
+
+			if (root == NULL || xmlerrcxt->err_occurred)
+				xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
+							"could not allocate xml node");
+
+			/* This attaches root to doc, so we need not free it separately. */
+			xmlDocSetRootElement(doc, root);
 
 			/* allow empty content */
 			if (*(utf8string + count))
 			{
-				res_code = xmlParseBalancedChunkMemory(doc, NULL, NULL, 0,
-													   utf8string + count,
-													   parsed_nodes);
-				if (res_code != 0 || xmlerrcxt->err_occurred)
+				xmlNodePtr	node_list = NULL;
+				xmlParserErrors res;
+
+				res = xmlParseInNodeContext(root,
+											(char *) utf8string + count,
+											strlen((char *) utf8string + count),
+											options,
+											&node_list);
+
+				if (res != XML_ERR_OK || xmlerrcxt->err_occurred)
 				{
+					xmlFreeNodeList(node_list);
 					xml_errsave(escontext, xmlerrcxt,
 								ERRCODE_INVALID_XML_CONTENT,
 								"invalid XML content");
 					goto fail;
 				}
+
+				if (parsed_nodes != NULL)
+					*parsed_nodes = node_list;
+				else
+					xmlFreeNodeList(node_list);
 			}
 		}
 
@@ -1940,8 +1969,6 @@ fail:
 	}
 	PG_CATCH();
 	{
-		if (save_keep_blanks != -1)
-			xmlKeepBlanksDefault(save_keep_blanks);
 		if (doc != NULL)
 			xmlFreeDoc(doc);
 		if (ctxt != NULL)
@@ -1952,9 +1979,6 @@ fail:
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	if (save_keep_blanks != -1)
-		xmlKeepBlanksDefault(save_keep_blanks);
 
 	if (ctxt != NULL)
 		xmlFreeParserCtxt(ctxt);
@@ -5161,4 +5185,30 @@ XmlTableDestroyOpaque(TableFuncScanState *state)
 #else
 	NO_XML_SUPPORT();
 #endif							/* not USE_LIBXML */
+}
+
+/*
+ * GUC check_hook for check_xml_parse_huge
+ */
+bool
+check_xml_parse_huge(bool *newval, void **extra, GucSource source)
+{
+	/* Always OK to turn off */
+	if (!*newval)
+		return true;
+
+	/* During postmaster startup there is no role state */
+	if (!IsUnderPostmaster)
+		return true;
+
+	/* In backends, enforce privileges */
+	if (!superuser() &&
+		!has_privs_of_role(GetUserId(), ROLE_PG_XML_PARSE_HUGE))
+	{
+		GUC_check_errmsg("permission denied to set parameter \"xml_parse_huge\"");
+		GUC_check_errhint("You must be a superuser or a member of the \"pg_xml_parse_huge\" role to set this option.");
+		return false;
+	}
+
+	return true;
 }

@@ -795,6 +795,26 @@ GRANT pg_signal_backend TO admin_user;
       </para>
      </listitem>
     </varlistentry>
+
+    <varlistentry id="predefined-role-pg-xml-parse-huge" xreflabel="pg_xml_parse_huge">
+     <term><varname>pg_xml_parse_huge</varname></term>
+     <listitem>
+      <para>
+       <varname>pg_xml_parse_huge</varname> grants permission to enable the configuration parameter
+       <xref linkend="guc-xml-parse-huge"/> within a session. This parameter
+       activates libxml2’s <literal>XML_PARSE_HUGE</literal> mode, which relaxes
+       certain internal parser limits on XML document size and nesting depth.
+      </para>
+
+      <para>
+       Membership in this role does not automatically enable the setting; it
+       only authorizes the user to change it for their own sessions. Cluster-wide
+       enablement remains a superuser-only operation via
+       <filename>postgresql.conf</filename> or <command>ALTER SYSTEM</command>.
+      </para>
+     </listitem>
+    </varlistentry>
+
    </variablelist>
   </para>
 

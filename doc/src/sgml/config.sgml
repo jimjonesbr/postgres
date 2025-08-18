@@ -10339,6 +10339,32 @@ SET XML OPTION { DOCUMENT | CONTENT };
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-xml-parse-huge" xreflabel="xml_parse_huge">
+      <term><varname>xml_parse_huge</varname> (<type>boolean</type>)</term>
+      <listitem>
+       <para>
+        Enables use of libxml2’s <literal>XML_PARSE_HUGE</literal> option when
+        parsing XML documents. This relaxes certain built-in parser limits, such
+        as maximum text node size and maximum depth of nested elements, which
+        allows processing of very large or deeply nested XML documents.
+       </para>
+
+       <para>
+        By default, this parameter is <literal>off</literal>.
+       </para>
+
+       <para>
+        This parameter can be set at the system level (for all sessions) in
+        <filename>postgresql.conf</filename> or with
+        <command>ALTER SYSTEM</command>. Only superusers may change it at the
+        system level. At the session level, it can be enabled by superusers or
+        by members of the predefined role
+        <xref linkend="predefined-role-pg-xml-parse-huge"/>. Attempts to set it
+        without the required privileges will result in an error.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-gin-pending-list-limit" xreflabel="gin_pending_list_limit">
       <term><varname>gin_pending_list_limit</varname> (<type>integer</type>)
       <indexterm>

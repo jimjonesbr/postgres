@@ -1867,3 +1867,43 @@ SELECT xmltext('x'|| '<P>73</P>'::xml || .42 || true || 'j'::char);
  x&lt;P&gt;73&lt;/P&gt;0.42truej
 (1 row)
 
+CREATE ROLE u1 LOGIN;
+-- Cannot change this setting as a non-superuser
+SET ROLE u1;
+SET xml_parse_huge TO on;
+ERROR:  permission denied to set parameter "xml_parse_huge"
+HINT:  You must be a superuser or a member of the "pg_xml_parse_huge" role to set this option.
+ALTER SYSTEM SET xml_parse_huge TO on;
+ERROR:  permission denied to set parameter "xml_parse_huge"
+SHOW xml_parse_huge;
+ xml_parse_huge 
+----------------
+ off
+(1 row)
+
+-- Back to superuser
+RESET ROLE;
+-- Granting pg_xml_parse_huge to u1
+GRANT pg_xml_parse_huge TO u1;
+-- Previously this failed, but now it should work:
+SET ROLE u1;
+SET xml_parse_huge TO on;
+SHOW xml_parse_huge;
+ xml_parse_huge 
+----------------
+ on
+(1 row)
+
+CREATE TABLE t1 AS SELECT ('<root>' || repeat('X',10000001) || '</root>')::xml;
+-- disabling xml_parse_huge should prevent parsing large XML documents
+SET xml_parse_huge TO off;
+\set VERBOSITY terse
+CREATE TABLE t2 AS SELECT ('<root>' || repeat('X',10000001) || '</root>')::xml;
+ERROR:  invalid XML content
+\set VERBOSITY default
+-- Back to superuser
+RESET ROLE;
+-- Cleanup
+RESET ROLE;
+DROP TABLE t1;
+DROP ROLE u1;

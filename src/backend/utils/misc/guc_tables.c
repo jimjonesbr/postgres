@@ -2143,6 +2143,17 @@ struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"xml_parse_huge", PGC_USERSET, RESOURCES_MEM,
+			gettext_noop("Enables libxml2's XML_PARSE_HUGE option for XML parsing in this session."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&xml_parse_huge,
+		false,
+		check_xml_parse_huge, NULL, NULL
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, false, NULL, NULL, NULL
