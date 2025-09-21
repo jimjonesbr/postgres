@@ -2,7 +2,7 @@
 -- Test INSERT/UPDATE/DELETE RETURNING
 --
 -- Simple cases
-CREATE TEMP TABLE foo (f1 serial, f2 text, f3 int default 42);
+CREATE TABLE foo (f1 serial, f2 text, f3 int default 42);
 INSERT INTO foo (f2,f3)
   VALUES ('test', DEFAULT), ('More', 11), (upper('more'), 7+9)
   RETURNING *, f1+f3 AS sum;
@@ -447,7 +447,7 @@ INSERT INTO foo VALUES (4)
             new.tableoid::regclass, new.ctid, new.*, *;
                                                                                     QUERY PLAN                                                                                    
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Insert on pg_temp.foo
+ Insert on public.foo
    Output: (old.tableoid)::regclass, old.ctid, old.f1, old.f2, old.f3, old.f4, (new.tableoid)::regclass, new.ctid, new.f1, new.f2, new.f3, new.f4, foo.f1, foo.f2, foo.f3, foo.f4
    ->  Result
          Output: 4, NULL::text, 42, '99'::bigint
@@ -471,7 +471,7 @@ INSERT INTO foo VALUES (4, 'conflict'), (5, 'ok')
             n.tableoid::regclass, n.ctid, n.*, *;
                                                                         QUERY PLAN                                                                        
 ----------------------------------------------------------------------------------------------------------------------------------------------------------
- Insert on pg_temp.foo
+ Insert on public.foo
    Output: (o.tableoid)::regclass, o.ctid, o.f1, o.f2, o.f3, o.f4, (n.tableoid)::regclass, n.ctid, n.f1, n.f2, n.f3, n.f4, foo.f1, foo.f2, foo.f3, foo.f4
    Conflict Resolution: UPDATE
    Conflict Arbiter Indexes: foo_f1_idx
@@ -498,12 +498,12 @@ UPDATE foo SET f4 = 100 WHERE f1 = 5
             old.f4::text||'->'||new.f4::text AS change;
                                                                                                      QUERY PLAN                                                                                                     
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Update on pg_temp.foo
+ Update on public.foo
    Output: (old.tableoid)::regclass, old.ctid, old.f1, old.f2, old.f3, old.f4, old.*, (new.tableoid)::regclass, new.ctid, new.f1, new.f2, new.f3, new.f4, new.*, (((old.f4)::text || '->'::text) || (new.f4)::text)
-   Update on pg_temp.foo foo_1
+   Update on public.foo foo_1
    ->  Result
          Output: '100'::bigint, foo_1.tableoid, foo_1.ctid
-         ->  Seq Scan on pg_temp.foo foo_1
+         ->  Seq Scan on public.foo foo_1
                Output: foo_1.tableoid, foo_1.ctid
                Filter: (foo_1.f1 = 5)
 (8 rows)
@@ -524,10 +524,10 @@ DELETE FROM foo WHERE f1 = 5
             new.tableoid::regclass, new.ctid, new.*, *;
                                                                                         QUERY PLAN                                                                                        
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Delete on pg_temp.foo
+ Delete on public.foo
    Output: (old.tableoid)::regclass, old.ctid, old.f1, old.f2, old.f3, old.f4, (new.tableoid)::regclass, new.ctid, new.f1, new.f2, new.f3, new.f4, foo_1.f1, foo_1.f2, foo_1.f3, foo_1.f4
-   Delete on pg_temp.foo foo_1
-   ->  Seq Scan on pg_temp.foo foo_1
+   Delete on public.foo foo_1
+   ->  Seq Scan on public.foo foo_1
          Output: foo_1.tableoid, foo_1.ctid
          Filter: (foo_1.f1 = 5)
 (6 rows)
@@ -547,7 +547,7 @@ INSERT INTO foo VALUES (5, 'subquery test')
             (SELECT max(new.f4 + x) FROM generate_series(1, 10) x) new_max;
                           QUERY PLAN                           
 ---------------------------------------------------------------
- Insert on pg_temp.foo
+ Insert on public.foo
    Output: (SubPlan 1), (SubPlan 2)
    ->  Result
          Output: 5, 'subquery test'::text, 42, '99'::bigint
@@ -580,12 +580,12 @@ UPDATE foo SET f4 = 100 WHERE f1 = 5
             (SELECT max(new.f4 + x) FROM generate_series(1, 10) x) new_max;
                           QUERY PLAN                           
 ---------------------------------------------------------------
- Update on pg_temp.foo
+ Update on public.foo
    Output: (SubPlan 1), (SubPlan 2), (SubPlan 3)
-   Update on pg_temp.foo foo_1
+   Update on public.foo foo_1
    ->  Result
          Output: '100'::bigint, foo_1.tableoid, foo_1.ctid
-         ->  Seq Scan on pg_temp.foo foo_1
+         ->  Seq Scan on public.foo foo_1
                Output: foo_1.tableoid, foo_1.ctid
                Filter: (foo_1.f1 = 5)
    SubPlan 1
@@ -620,10 +620,10 @@ DELETE FROM foo WHERE f1 = 5
             (SELECT max(new.f4 + x) FROM generate_series(1, 10) x) new_max;
                           QUERY PLAN                           
 ---------------------------------------------------------------
- Delete on pg_temp.foo
+ Delete on public.foo
    Output: (SubPlan 1), (SubPlan 2)
-   Delete on pg_temp.foo foo_1
-   ->  Seq Scan on pg_temp.foo foo_1
+   Delete on public.foo foo_1
+   ->  Seq Scan on public.foo foo_1
          Output: foo_1.tableoid, foo_1.ctid
          Filter: (foo_1.f1 = 5)
    SubPlan 1
@@ -656,15 +656,15 @@ EXPLAIN (verbose, costs off)
 DELETE FROM foo WHERE f1 = 4 RETURNING old.*,new.*, *;
                                                               QUERY PLAN                                                               
 ---------------------------------------------------------------------------------------------------------------------------------------
- Update on pg_temp.foo
+ Update on public.foo
    Output: old.f1, old.f2, old.f3, old.f4, new.f1, new.f2, new.f3, new.f4, foo_2.f1, foo_2.f2, foo_2.f3, foo_2.f4
-   Update on pg_temp.foo foo_2
+   Update on public.foo foo_2
    ->  Nested Loop
          Output: (foo_2.f2 || ' (deleted)'::text), '-1'::integer, '-1'::bigint, foo_1.ctid, foo_1.tableoid, foo_2.tableoid, foo_2.ctid
-         ->  Seq Scan on pg_temp.foo foo_2
+         ->  Seq Scan on public.foo foo_2
                Output: foo_2.f2, foo_2.f1, foo_2.tableoid, foo_2.ctid
                Filter: (foo_2.f1 = 4)
-         ->  Seq Scan on pg_temp.foo foo_1
+         ->  Seq Scan on public.foo foo_1
                Output: foo_1.ctid, foo_1.f1, foo_1.tableoid
                Filter: (foo_1.f1 = 4)
 (11 rows)
@@ -681,9 +681,9 @@ UPDATE joinview SET f3 = f3 + 1 WHERE f3 = 57
   RETURNING old.*, new.*, *, new.f3 - old.f3 AS delta_f3;
                                                                                   QUERY PLAN                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Update on pg_temp.foo
+ Update on public.foo
    Output: old.f1, old.f2, old.f3, old.f4, joinme.other, new.f1, new.f2, new.f3, new.f4, joinme.other, foo_1.f1, foo_1.f2, foo_1.f3, foo_1.f4, joinme.other, (new.f3 - old.f3)
-   Update on pg_temp.foo foo_1
+   Update on public.foo foo_1
    ->  Hash Join
          Output: foo_2.f1, (foo_2.f3 + 1), joinme.ctid, foo_2.ctid, joinme_1.ctid, joinme.other, foo_1.tableoid, foo_1.ctid, foo_2.tableoid
          Hash Cond: (foo_1.f2 = joinme.f2j)
@@ -694,7 +694,7 @@ UPDATE joinview SET f3 = f3 + 1 WHERE f3 = 57
                      Output: joinme_1.ctid, joinme_1.f2j
                ->  Hash
                      Output: foo_1.f2, foo_1.tableoid, foo_1.ctid
-                     ->  Seq Scan on pg_temp.foo foo_1
+                     ->  Seq Scan on public.foo foo_1
                            Output: foo_1.f2, foo_1.tableoid, foo_1.ctid
          ->  Hash
                Output: joinme.ctid, joinme.other, joinme.f2j, foo_2.f1, foo_2.f3, foo_2.ctid, foo_2.f2, foo_2.tableoid
@@ -705,7 +705,7 @@ UPDATE joinview SET f3 = f3 + 1 WHERE f3 = 57
                            Output: joinme.ctid, joinme.other, joinme.f2j
                      ->  Hash
                            Output: foo_2.f1, foo_2.f3, foo_2.ctid, foo_2.f2, foo_2.tableoid
-                           ->  Seq Scan on pg_temp.foo foo_2
+                           ->  Seq Scan on public.foo foo_2
                                  Output: foo_2.f1, foo_2.f3, foo_2.ctid, foo_2.f2, foo_2.tableoid
                                  Filter: (foo_2.f3 = 57)
 (27 rows)
@@ -768,7 +768,7 @@ UPDATE joinview SET f3 = f3 + 1, f4 = 7 WHERE f3 = 58
                Output: joinme.other, joinme.ctid, joinme.f2j
          ->  Hash
                Output: foo.f3, foo.f1, foo.f2, foo.f4, foo.ctid, foo.tableoid
-               ->  Seq Scan on pg_temp.foo
+               ->  Seq Scan on public.foo
                      Output: foo.f3, foo.f1, foo.f2, foo.f4, foo.ctid, foo.tableoid
                      Filter: (foo.f3 = 58)
 (12 rows)
@@ -986,3 +986,5 @@ BEGIN ATOMIC
            WHERE (foo_1.* = n.*)) AS count;
 END
 DROP FUNCTION foo_update;
+DROP TABLE foo CASCADE;
+NOTICE:  drop cascades to view voo

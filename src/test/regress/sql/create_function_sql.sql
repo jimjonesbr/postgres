@@ -194,6 +194,19 @@ CREATE FUNCTION functest_S_xxx(x int) RETURNS int
     AS $$ SELECT x * 2 $$
     RETURN x * 3;
 
+-- error: BEGIN ATOMIC SQL-functions cannot depend on temporary tables
+CREATE TEMPORARY TABLE functest_temp AS SELECT 1 AS val;
+CREATE FUNCTION functest_temp_dep() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT val FROM functest_temp;
+END;
+
+-- this should work, as the function is created in a temp schema
+CREATE FUNCTION pg_temp.functest_temp_dep() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT val FROM functest_temp;
+END;
+
 -- polymorphic arguments not allowed in this form
 CREATE FUNCTION functest_S_xx(x anyarray) RETURNS anyelement
     LANGUAGE SQL
