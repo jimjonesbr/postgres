@@ -974,7 +974,7 @@ fmgr_sql_validator(PG_FUNCTION_ARGS)
 			Oid			rettype;
 			TupleDesc	rettupdesc;
 
-			check_sql_fn_statements(querytree_list);
+			check_sql_fn_statements(querytree_list, !isnull);
 
 			(void) get_func_result_type(funcoid, &rettype, &rettupdesc);
 

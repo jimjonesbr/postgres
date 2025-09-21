@@ -930,6 +930,8 @@ BEGIN ATOMIC
               (SELECT count(*) FROM foo WHERE foo = o),
               (SELECT count(*) FROM foo WHERE foo = n);
 END;
+WARNING:  function defined with BEGIN ATOMIC depends on temporary relation "foo"
+DETAIL:  the function will be dropped automatically at session end.
 \sf foo_update
 CREATE OR REPLACE FUNCTION public.foo_update()
  RETURNS void
