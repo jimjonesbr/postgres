@@ -498,28 +498,44 @@ RangeVarGetRelidExtended(const RangeVar *relation, LOCKMODE lockmode,
 		 */
 		if (relation->relpersistence == RELPERSISTENCE_TEMP)
 		{
-			if (!OidIsValid(myTempNamespace))
-				relId = InvalidOid; /* this probably can't happen? */
+			Oid	namespaceId;
+
+			if (relation->schemaname)
+			{
+				namespaceId = LookupExplicitNamespace(relation->schemaname, missing_ok);
+
+				/*
+				 * If the user has specified an existing temporary schema
+				 * owned by another user.
+				 */
+				if (OidIsValid(namespaceId) && namespaceId != myTempNamespace)
+				{
+					/*
+					 * We don't allow users to access temp tables of other
+					 * sessions except for the case of dropping tables.
+					 */
+					if (!(flags & RVR_OTHER_TEMP_OK))
+						ereport(ERROR,
+								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								 errmsg("cannot access temporary relations of other sessions")));
+				}
+			}
 			else
 			{
-				if (relation->schemaname)
-				{
-					Oid			namespaceId;
+				namespaceId = myTempNamespace;
 
-					namespaceId = LookupExplicitNamespace(relation->schemaname, missing_ok);
-
-					/*
-					 * For missing_ok, allow a non-existent schema name to
-					 * return InvalidOid.
-					 */
-					if (namespaceId != myTempNamespace)
-						ereport(ERROR,
-								(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-								 errmsg("temporary tables cannot specify a schema name")));
-				}
-
-				relId = get_relname_relid(relation->relname, myTempNamespace);
+				/*
+				 * If this table was recognized as temporary, it means that we
+				 * found it because backend's temporary namespace was specified
+				 * in search_path. Thus, MyTempNamespace must contain valid oid.
+				 */
+				Assert(OidIsValid(namespaceId));
 			}
+
+			if (missing_ok && !OidIsValid(namespaceId))
+				relId = InvalidOid;
+			else
+				relId = get_relname_relid(relation->relname, namespaceId);
 		}
 		else if (relation->schemaname)
 		{
@@ -3620,21 +3636,19 @@ get_namespace_oid(const char *nspname, bool missing_ok)
 RangeVar *
 makeRangeVarFromNameList(const List *names)
 {
-	RangeVar   *rel = makeRangeVar(NULL, NULL, -1);
+	RangeVar   *rel;
 
 	switch (list_length(names))
 	{
 		case 1:
-			rel->relname = strVal(linitial(names));
+			rel = makeRangeVar(NULL, strVal(linitial(names)), -1);
 			break;
 		case 2:
-			rel->schemaname = strVal(linitial(names));
-			rel->relname = strVal(lsecond(names));
+			rel = makeRangeVar(strVal(linitial(names)), strVal(lsecond(names)), -1);
 			break;
 		case 3:
+			rel = makeRangeVar(strVal(lsecond(names)), strVal(lthird(names)), -1);
 			rel->catalogname = strVal(linitial(names));
-			rel->schemaname = strVal(lsecond(names));
-			rel->relname = strVal(lthird(names));
 			break;
 		default:
 			ereport(ERROR,
@@ -3841,6 +3855,8 @@ GetTempNamespaceProcNumber(Oid namespaceId)
 		return INVALID_PROC_NUMBER; /* no such namespace? */
 	if (strncmp(nspname, "pg_temp_", 8) == 0)
 		result = atoi(nspname + 8);
+	else if (strcmp(nspname, "pg_temp") == 0)
+		result = MyProcNumber;
 	else if (strncmp(nspname, "pg_toast_temp_", 14) == 0)
 		result = atoi(nspname + 14);
 	else

@@ -478,9 +478,13 @@ makeRangeVar(char *schemaname, char *relname, int location)
 	r->schemaname = schemaname;
 	r->relname = relname;
 	r->inh = true;
-	r->relpersistence = RELPERSISTENCE_PERMANENT;
 	r->alias = NULL;
 	r->location = location;
+
+	if (r->schemaname && strncmp(r->schemaname, "pg_temp", 7) == 0)
+		r->relpersistence = RELPERSISTENCE_TEMP;
+	else
+		r->relpersistence = RELPERSISTENCE_PERMANENT;
 
 	return r;
 }

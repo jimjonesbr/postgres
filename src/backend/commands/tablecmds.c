@@ -1624,7 +1624,8 @@ RemoveRelations(DropStmt *drop)
 		state.heapOid = InvalidOid;
 		state.partParentOid = InvalidOid;
 
-		relOid = RangeVarGetRelidExtended(rel, lockmode, RVR_MISSING_OK,
+		relOid = RangeVarGetRelidExtended(rel, lockmode,
+										  RVR_MISSING_OK | RVR_OTHER_TEMP_OK,
 										  RangeVarCallbackForDropRelation,
 										  &state);
 
