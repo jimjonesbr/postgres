@@ -223,7 +223,7 @@ static void sql_compile_error_callback(void *arg);
 static void sql_exec_error_callback(void *arg);
 static void ShutdownSQLFunction(Datum arg);
 static void RemoveSQLFunctionCache(void *arg);
-static void check_sql_fn_statement(List *queryTreeList);
+static void check_sql_fn_statement(List *queryTreeList, bool enforce_no_temp_deps);
 static bool check_sql_stmt_retval(List *queryTreeList,
 								  Oid rettype, TupleDesc rettupdesc,
 								  char prokind, bool insertDroppedCols);
@@ -950,7 +950,7 @@ prepare_next_query(SQLFunctionHashEntry *func)
 	/*
 	 * Check that there are no statements we don't want to allow.
 	 */
-	check_sql_fn_statement(queryTree_list);
+	check_sql_fn_statement(queryTree_list, false);
 
 	/*
 	 * If this is the last query, check that the function returns the type it
@@ -1247,7 +1247,7 @@ sql_postrewrite_callback(List *querytree_list, void *arg)
 	 * there's no real point in this because the result can't change from what
 	 * we saw originally.  But it's cheap and maybe someday it will matter.)
 	 */
-	check_sql_fn_statement(querytree_list);
+	check_sql_fn_statement(querytree_list, false);
 
 	/*
 	 * If this is the last query, we must re-do what check_sql_stmt_retval did
@@ -2030,9 +2030,13 @@ RemoveSQLFunctionCache(void *arg)
  *
  * Check statements in an SQL function.  Error out if there is anything that
  * is not acceptable.
+ *
+ * The enforce_no_temp_deps flag indicates whether the function was defined
+ * using SQL-standard BEGIN ATOMIC.  In that case we additionally check for
+ * dependencies on temporary relations and throw an ERROR if found.
  */
 void
-check_sql_fn_statements(List *queryTreeLists)
+check_sql_fn_statements(List *queryTreeLists, bool enforce_no_temp_deps)
 {
 	ListCell   *lc;
 
@@ -2041,7 +2045,7 @@ check_sql_fn_statements(List *queryTreeLists)
 	{
 		List	   *sublist = lfirst_node(List, lc);
 
-		check_sql_fn_statement(sublist);
+		check_sql_fn_statement(sublist, enforce_no_temp_deps);
 	}
 }
 
@@ -2049,13 +2053,52 @@ check_sql_fn_statements(List *queryTreeLists)
  * As above, for a single sublist of Queries.
  */
 static void
-check_sql_fn_statement(List *queryTreeList)
+check_sql_fn_statement(List *queryTreeList, bool enforce_no_temp_deps)
 {
 	ListCell   *lc;
 
 	foreach(lc, queryTreeList)
 	{
 		Query	   *query = lfirst_node(Query, lc);
+
+		if (enforce_no_temp_deps)
+		{
+			ListCell *lc2;
+
+			/*
+			 * Walk the range table of this query to detect references to
+			 * temporary relations.
+			 *
+			 * For ordinary SQL functions, the function definition is stored
+			 * permanently even if it refers to temporary relations.  Once
+			 * the session ends and the temp relation vanishes, the function
+			 * still exists but will fail at execution time with "relation
+			 * does not exist". We do not throw any error at creation
+			 * time in that case; the function is simply left in place.
+			 *
+			 * For functions USING SQL-standard BEGIN ATOMIC definition,
+			 * this situation is more confusing: the function appears to be
+			 * a permanent database object, but in fact its lifetime is tied
+			 * to session-local objects that vanish at session end. To avoid
+			 * silent surprises, we throw an ERROR at CREATE FUNCTION time if
+			 * an ATOMIC function depends on a temporary relation.
+			 */
+			foreach (lc2, query->rtable)
+			{
+				RangeTblEntry *rte = lfirst_node(RangeTblEntry, lc2);
+
+				if (rte->rtekind == RTE_RELATION)
+				{
+					Oid relnsp = get_rel_namespace(rte->relid);
+
+					if (isAnyTempNamespace(relnsp))
+						ereport(ERROR,
+								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								 errmsg("SQL function defined with BEGIN ATOMIC cannot depend on temporary relation \"%s\"",
+										get_rel_name(rte->relid))));
+				}
+			}
+		}
 
 		/*
 		 * Disallow calling procedures with output arguments.  The current

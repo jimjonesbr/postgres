@@ -27,6 +27,7 @@
 #include "catalog/pg_transform.h"
 #include "catalog/pg_type.h"
 #include "executor/functions.h"
+#include "catalog/namespace.h"
 #include "funcapi.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
@@ -974,7 +975,13 @@ fmgr_sql_validator(PG_FUNCTION_ARGS)
 			Oid			rettype;
 			TupleDesc	rettupdesc;
 
-			check_sql_fn_statements(querytree_list);
+			/* If true, validator will error if the function body references any
+			 * temporary relation.  Computed here as: function has a prosqlbody (i.e.
+			 * defined with BEGIN ATOMIC) and is being created in a non-temp schema.
+			 */
+			bool error_on_temp_deps = !isnull && !isAnyTempNamespace(proc->pronamespace);
+
+			check_sql_fn_statements(querytree_list, error_on_temp_deps);
 
 			(void) get_func_result_type(funcoid, &rettype, &rettupdesc);
 
