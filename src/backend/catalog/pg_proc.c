@@ -24,6 +24,7 @@
 #include "catalog/pg_language.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_type.h"
 #include "executor/functions.h"
@@ -663,7 +664,33 @@ ProcedureCreate(const char *procedureName,
 
 	/* dependency on SQL routine body */
 	if (languageObjectId == SQLlanguageId && prosqlbody)
-		recordDependencyOnExpr(&myself, prosqlbody, NIL, DEPENDENCY_NORMAL);
+	{
+		ObjectAddresses *body_addrs;
+
+		/*
+		 * For SQL functions with BEGIN ATOMIC, we use a collect-then-filter-then-record
+		 * approach to handle temp object dependencies appropriately.
+		 */
+		body_addrs = new_object_addresses();
+		collectDependenciesFromExpr(body_addrs, prosqlbody, NIL);
+
+		/*
+		 * Check for temp objects that are referenced in the function body.
+		 * For SQL functions with BEGIN ATOMIC bodies, we need to prevent
+		 * dependencies on temporary objects since such functions should be
+		 * permanently definable and not depend on session-specific temp objects.
+		 * This will raise an error if any temp objects are found. If the function
+		 * itself is being created in a temporary schema, then it's OK for it to
+		 * reference temp objects.
+		 */
+		if (!IsBootstrapProcessingMode() && !IsBinaryUpgrade &&
+			!isAnyTempNamespace(procNamespace))
+			filter_temp_objects(body_addrs);
+
+		/* Record the filtered dependencies */
+		record_object_address_dependencies(&myself, body_addrs, DEPENDENCY_NORMAL);
+		free_object_addresses(body_addrs);
+	}
 
 	/* dependency on parameter default expressions */
 	if (parameterDefaults)

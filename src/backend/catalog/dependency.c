@@ -44,6 +44,7 @@
 #include "catalog/pg_language.h"
 #include "catalog/pg_largeobject.h"
 #include "catalog/pg_namespace.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
@@ -2486,6 +2487,88 @@ eliminate_duplicate_dependencies(ObjectAddresses *addrs)
 	}
 
 	addrs->numrefs = newrefs;
+}
+
+/*
+ * filter_temp_objects - detect and reject temporary objects in an ObjectAddresses array
+ *
+ * This function checks if any dependencies on temporary objects (objects in
+ * temporary namespaces) exist in the given ObjectAddresses array. If temp objects
+ * are found, it raises an error to prevent them from being used in SQL functions
+ * with BEGIN ATOMIC bodies, as such dependencies would be inappropriate for
+ * permanent function definitions.
+ *
+ * Currently checks for temporary tables, views, types, and functions by examining
+ * their containing namespaces. The function raises an error with a descriptive
+ * message if any temporary object dependency is detected.
+ */
+void
+filter_temp_objects(ObjectAddresses *addrs)
+{
+	int			oldref;
+
+	if (addrs->numrefs <= 0)
+		return;					/* nothing to do */
+
+	/* Check all dependencies for temp objects */
+	for (oldref = 0; oldref < addrs->numrefs; oldref++)
+	{
+		ObjectAddress *thisobj = addrs->refs + oldref;
+		bool		is_temp = false;
+		char	   *objname = NULL;
+
+		/* Check if this dependency is on a temporary object */
+		if (thisobj->classId == RelationRelationId)
+		{
+			/* For relations, check if they're in a temp namespace */
+			Oid			relnamespace = get_rel_namespace(thisobj->objectId);
+			if (OidIsValid(relnamespace) && isAnyTempNamespace(relnamespace))
+			{
+				is_temp = true;
+				objname = get_rel_name(thisobj->objectId);
+			}
+		}
+		else if (thisobj->classId == TypeRelationId)
+		{
+			/* For types, check if they're in a temp namespace */
+			HeapTuple	tp;
+			Form_pg_type typform;
+			Oid			typnamespace = InvalidOid;
+
+			tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(thisobj->objectId));
+			if (HeapTupleIsValid(tp))
+			{
+				typform = (Form_pg_type) GETSTRUCT(tp);
+				typnamespace = typform->typnamespace;
+				if (OidIsValid(typnamespace) && isAnyTempNamespace(typnamespace))
+				{
+					is_temp = true;
+					objname = NameStr(typform->typname);
+				}
+				ReleaseSysCache(tp);
+			}
+		}
+		else if (thisobj->classId == ProcedureRelationId)
+		{
+			/* For functions, check if they're in a temp namespace */
+			Oid			funcnamespace = get_func_namespace(thisobj->objectId);
+			if (OidIsValid(funcnamespace) && isAnyTempNamespace(funcnamespace))
+			{
+				is_temp = true;
+				objname = get_func_name(thisobj->objectId);
+			}
+		}
+
+		/* Raise error if temp object found */
+		if (is_temp)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("cannot use temporary object \"%s\" in SQL function with BEGIN ATOMIC",
+							objname ? objname : "unknown"),
+					 errdetail("SQL functions with BEGIN ATOMIC cannot depend on temporary objects.")));
+		}
+	}
 }
 
 /*

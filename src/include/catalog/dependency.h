@@ -123,6 +123,8 @@ extern void recordDependencyOnSingleRelExpr(const ObjectAddress *depender,
 											DependencyType self_behavior,
 											bool reverse_self);
 
+extern void filter_temp_objects(ObjectAddresses *addrs);
+
 extern ObjectAddresses *new_object_addresses(void);
 
 extern void add_exact_object_address(const ObjectAddress *object,
