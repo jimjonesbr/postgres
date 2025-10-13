@@ -1554,9 +1554,40 @@ recordDependencyOnExpr(const ObjectAddress *depender,
 					   Node *expr, List *rtable,
 					   DependencyType behavior)
 {
+	ObjectAddresses *addrs;
+
+	addrs = new_object_addresses();
+
+	/* Collect all dependencies from the expression */
+	collectDependenciesFromExpr(addrs, expr, rtable);
+
+	/* And record 'em */
+	recordMultipleDependencies(depender,
+							   addrs->refs, addrs->numrefs,
+							   behavior);
+
+	free_object_addresses(addrs);
+}
+
+/*
+ * collectDependenciesFromExpr - collect expression dependencies
+ *
+ * This function analyzes an expression or query in node-tree form to find all
+ * the objects it refers to (tables, columns, operators, functions, etc.) and
+ * adds them to the provided ObjectAddresses structure. Unlike recordDependencyOnExpr,
+ * this function does not immediately record the dependencies, allowing the caller
+ * to examine, filter, or modify the collected dependencies before recording them.
+ *
+ * This is particularly useful when dependency recording needs to be conditional
+ * or when dependencies from multiple sources need to be merged before recording.
+ */
+void
+collectDependenciesFromExpr(ObjectAddresses *addrs,
+							Node *expr, List *rtable)
+{
 	find_expr_references_context context;
 
-	context.addrs = new_object_addresses();
+	context.addrs = addrs;
 
 	/* Set up interpretation for Vars at varlevelsup = 0 */
 	context.rtables = list_make1(rtable);
@@ -1565,14 +1596,7 @@ recordDependencyOnExpr(const ObjectAddress *depender,
 	find_expr_references_walker(expr, &context);
 
 	/* Remove any duplicates */
-	eliminate_duplicate_dependencies(context.addrs);
-
-	/* And record 'em */
-	recordMultipleDependencies(depender,
-							   context.addrs->refs, context.addrs->numrefs,
-							   behavior);
-
-	free_object_addresses(context.addrs);
+	eliminate_duplicate_dependencies(addrs);
 }
 
 /*
@@ -1599,10 +1623,12 @@ recordDependencyOnSingleRelExpr(const ObjectAddress *depender,
 								DependencyType self_behavior,
 								bool reverse_self)
 {
+	ObjectAddresses *addrs;
 	find_expr_references_context context;
 	RangeTblEntry rte = {0};
 
-	context.addrs = new_object_addresses();
+	addrs = new_object_addresses();
+	context.addrs = addrs;
 
 	/* We gin up a rather bogus rangetable list to handle Vars */
 	rte.type = T_RangeTblEntry;
@@ -1617,11 +1643,11 @@ recordDependencyOnSingleRelExpr(const ObjectAddress *depender,
 	find_expr_references_walker(expr, &context);
 
 	/* Remove any duplicates */
-	eliminate_duplicate_dependencies(context.addrs);
+	eliminate_duplicate_dependencies(addrs);
 
 	/* Separate self-dependencies if necessary */
 	if ((behavior != self_behavior || reverse_self) &&
-		context.addrs->numrefs > 0)
+		addrs->numrefs > 0)
 	{
 		ObjectAddresses *self_addrs;
 		ObjectAddress *outobj;
@@ -1630,11 +1656,11 @@ recordDependencyOnSingleRelExpr(const ObjectAddress *depender,
 
 		self_addrs = new_object_addresses();
 
-		outobj = context.addrs->refs;
+		outobj = addrs->refs;
 		outrefs = 0;
-		for (oldref = 0; oldref < context.addrs->numrefs; oldref++)
+		for (oldref = 0; oldref < addrs->numrefs; oldref++)
 		{
-			ObjectAddress *thisobj = context.addrs->refs + oldref;
+			ObjectAddress *thisobj = addrs->refs + oldref;
 
 			if (thisobj->classId == RelationRelationId &&
 				thisobj->objectId == relId)
@@ -1644,13 +1670,13 @@ recordDependencyOnSingleRelExpr(const ObjectAddress *depender,
 			}
 			else
 			{
-				/* Keep it in context.addrs */
+				/* Keep it in addrs */
 				*outobj = *thisobj;
 				outobj++;
 				outrefs++;
 			}
 		}
-		context.addrs->numrefs = outrefs;
+		addrs->numrefs = outrefs;
 
 		/* Record the self-dependencies with the appropriate direction */
 		if (!reverse_self)
@@ -1675,10 +1701,10 @@ recordDependencyOnSingleRelExpr(const ObjectAddress *depender,
 
 	/* Record the external dependencies */
 	recordMultipleDependencies(depender,
-							   context.addrs->refs, context.addrs->numrefs,
+							   addrs->refs, addrs->numrefs,
 							   behavior);
 
-	free_object_addresses(context.addrs);
+	free_object_addresses(addrs);
 }
 
 /*
