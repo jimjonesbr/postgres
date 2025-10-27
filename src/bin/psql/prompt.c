@@ -43,6 +43,8 @@
  *			or a ! if session is not connected to a database;
  *		in prompt2 -, *, ', or ";
  *		in prompt3 nothing
+ * %i - displays "read-only" if in hot standby or default_transaction_read_only
+ *		is on, "read/write" otherwise.
  * %x - transaction status: empty, *, !, ? (unknown or no connection)
  * %l - The line number inside the current statement, starting from 1.
  * %? - the error code of the last query (not yet implemented)
@@ -247,7 +249,22 @@ get_prompt(promptStatus_t status, ConditionalStack cstack)
 							break;
 					}
 					break;
+				case 'i':
+					if (pset.db)
+					{
+						const char *hs = PQparameterStatus(pset.db, "in_hot_standby");
+						const char *ro = PQparameterStatus(pset.db, "default_transaction_read_only");
 
+						if (!hs || !ro)
+							strlcpy(buf, _("unknown"), sizeof(buf));
+						else if (strcmp(hs, "on") == 0 || strcmp(ro, "on") == 0)
+							strlcpy(buf, "read-only", sizeof(buf));
+						else
+							strlcpy(buf, "read/write", sizeof(buf));
+					}
+					else
+						buf[0] = '\0';
+					break;
 				case 'x':
 					if (!pset.db)
 						buf[0] = '?';
