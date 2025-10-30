@@ -43,6 +43,8 @@
  *			or a ! if session is not connected to a database;
  *		in prompt2 -, *, ', or ";
  *		in prompt3 nothing
+ * %i - displays "read-only" if in hot standby, or if default_transaction_read_only
+ *     	or transaction_read_only are on, "read/write" otherwise.
  * %x - transaction status: empty, *, !, ? (unknown or no connection)
  * %l - The line number inside the current statement, starting from 1.
  * %? - the error code of the last query (not yet implemented)
@@ -247,7 +249,39 @@ get_prompt(promptStatus_t status, ConditionalStack cstack)
 							break;
 					}
 					break;
+				case 'i':
+					if (pset.db)
+					{
+						const char *hs = PQparameterStatus(pset.db, "in_hot_standby");
+						const char *ro = PQparameterStatus(pset.db, "default_transaction_read_only");
 
+						if (!hs || !ro)
+							strlcpy(buf, _("unknown"), sizeof(buf));
+						else if (strcmp(hs, "on") == 0 || strcmp(ro, "on") == 0)
+							strlcpy(buf, _("read-only"), sizeof(buf));
+						else
+						{
+							const char *tr = NULL;
+							PGresult   *res;
+
+							res = PQexec(pset.db, "SHOW transaction_read_only");
+							if (PQresultStatus(res) == PGRES_TUPLES_OK &&
+								PQntuples(res) == 1)
+								tr = PQgetvalue(res, 0, 0);
+
+							if (!tr)
+								strlcpy(buf, _("unknown"), sizeof(buf));
+							else if (strcmp(tr, "on") == 0)
+								strlcpy(buf, _("read-only"), sizeof(buf));
+							else
+								strlcpy(buf, _("read/write"), sizeof(buf));
+
+							PQclear(res);
+						}
+					}
+					else
+						buf[0] = '\0';
+					break;
 				case 'x':
 					if (!pset.db)
 						buf[0] = '?';

@@ -5044,6 +5044,22 @@ testdb=&gt; <userinput>INSERT INTO my_table VALUES (:'content');</userinput>
         </listitem>
       </varlistentry>
 
+      <varlistentry id="app-psql-prompting-i">
+        <term><literal>%i</literal></term>
+        <listitem>
+          <para>
+          Displays the session's read-only status as <literal>read-only</literal>
+          if the current transaction is read-only (<literal>transaction_read_only</literal>
+          is <literal>on</literal>), the server is in hot standby
+          (<literal>in_hot_standby</literal> is <literal>on</literal>), or the
+          default transaction mode is read-only (<literal>default_transaction_read_only</literal>
+          is <literal>on</literal>); otherwise displays <literal>read-write</literal>.
+          Useful for identifying sessions that cannot perform writes, such as in
+          replication setups or when explicit read-only transactions are in use.
+          </para>
+        </listitem>
+      </varlistentry>
+
       <varlistentry id="app-psql-prompting-x">
         <term><literal>%x</literal></term>
         <listitem>
