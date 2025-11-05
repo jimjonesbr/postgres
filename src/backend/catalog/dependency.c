@@ -44,6 +44,7 @@
 #include "catalog/pg_language.h"
 #include "catalog/pg_largeobject.h"
 #include "catalog/pg_namespace.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
@@ -2492,6 +2493,48 @@ eliminate_duplicate_dependencies(ObjectAddresses *addrs)
 	}
 
 	addrs->numrefs = newrefs;
+}
+
+/*
+ * filter_temp_objects - reject temporary object references
+ *
+ * Scan an ObjectAddresses array for references to temporary objects
+ * (objects in temporary namespaces) and raise an error if any are found.
+ * This is used to prevent SQL functions with BEGIN ATOMIC bodies from
+ * depending on temporary objects, as such dependencies would be
+ * inappropriate for permanent function definitions.
+ *
+ * Uses get_object_namespace() to identify which objects belong to
+ * schemas, then checks if those schemas are temporary.
+ */
+void
+filter_temp_objects(ObjectAddresses *addrs)
+{
+	int			i;
+
+	for (i = 0; i < addrs->numrefs; i++)
+	{
+		ObjectAddress *thisobj = addrs->refs + i;
+		Oid			objnamespace;
+
+		/*
+		 * Use get_object_namespace() to see if this object belongs to a
+		 * schema.  If not, we can skip it.
+		 */
+		objnamespace = get_object_namespace(thisobj);
+
+		/*
+		 * If the object is in a temporary namespace, complain.
+		 */
+		if (OidIsValid(objnamespace) && isAnyTempNamespace(objnamespace))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("cannot use temporary %s in SQL function with BEGIN ATOMIC",
+							getObjectDescription(thisobj, false)),
+					 errdetail("SQL functions with BEGIN ATOMIC cannot depend on temporary objects.")));
+		}
+	}
 }
 
 /*

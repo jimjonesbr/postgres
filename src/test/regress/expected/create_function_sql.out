@@ -297,6 +297,124 @@ CREATE FUNCTION functest_S_xx(x anyarray) RETURNS anyelement
     LANGUAGE SQL
     RETURN x[1];
 ERROR:  SQL function with unquoted function body cannot have polymorphic arguments
+CREATE TEMPORARY TABLE temp_table AS SELECT 1 AS val;
+CREATE TEMPORARY VIEW temp_view AS SELECT 42 AS val;
+CREATE TYPE pg_temp.temp_type AS (x int, y text);
+CREATE TEMPORARY SEQUENCE temp_seq;
+CREATE DOMAIN pg_temp.temp_domain AS int CHECK (VALUE > 0);
+CREATE FUNCTION pg_temp.temp_func() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT 42;
+END;
+-- these should fail: BEGIN ATOMIC SQL-functions cannot depend on temporary tables
+CREATE FUNCTION functest_temp_dep() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT val FROM temp_table;
+END;
+ERROR:  cannot use temporary table temp_table in SQL function with BEGIN ATOMIC
+DETAIL:  SQL functions with BEGIN ATOMIC cannot depend on temporary objects.
+CREATE FUNCTION functest_temp_dep_subquery() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT (SELECT COUNT(*) FROM temp_table);
+END;
+ERROR:  cannot use temporary table temp_table in SQL function with BEGIN ATOMIC
+DETAIL:  SQL functions with BEGIN ATOMIC cannot depend on temporary objects.
+CREATE FUNCTION functest_temp_dep_join() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT t1.val FROM temp_table t1
+  JOIN temp_view t2 ON t1.val = t2.val;
+END;
+ERROR:  cannot use temporary table temp_table in SQL function with BEGIN ATOMIC
+DETAIL:  SQL functions with BEGIN ATOMIC cannot depend on temporary objects.
+CREATE FUNCTION functest_temp_indirect_dep() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT * FROM pg_class WHERE oid = 'temp_table'::regclass;
+END;
+ERROR:  cannot use temporary table temp_table in SQL function with BEGIN ATOMIC
+DETAIL:  SQL functions with BEGIN ATOMIC cannot depend on temporary objects.
+-- this should work: the function is created in a temp schema
+CREATE FUNCTION pg_temp.functest_temp_dep() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT val FROM temp_table;
+END;
+-- this should fail: BEGIN ATOMIC SQL-functions cannot depend on temporary functions
+-- (wrapped in DO block because error message includes session-specific temp schema name)
+DO $$
+BEGIN
+  EXECUTE 'CREATE FUNCTION functest_temp_func_dep() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT pg_temp.temp_func(); END';
+EXCEPTION
+  WHEN feature_not_supported THEN
+    RAISE NOTICE 'caught expected error';
+END $$;
+NOTICE:  caught expected error
+-- this should work: temp function calling temp function (both in temp schema)
+CREATE FUNCTION pg_temp.functest_temp_to_temp() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT pg_temp.temp_func();
+END;
+-- this should fail: BEGIN ATOMIC SQL-functions cannot depend on temporary views
+CREATE FUNCTION functest_temp_view() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT val FROM temp_view;
+END;
+ERROR:  cannot use temporary view temp_view in SQL function with BEGIN ATOMIC
+DETAIL:  SQL functions with BEGIN ATOMIC cannot depend on temporary objects.
+-- this should fail: BEGIN ATOMIC SQL-functions cannot depend on temporary types
+CREATE FUNCTION functest_temp_type() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT (ROW(1,'test')::pg_temp.temp_type).x;
+END;
+ERROR:  cannot use temporary column x of composite type temp_type in SQL function with BEGIN ATOMIC
+DETAIL:  SQL functions with BEGIN ATOMIC cannot depend on temporary objects.
+-- this should fail: BEGIN ATOMIC SQL-functions cannot depend on temporary sequences
+CREATE FUNCTION functest_temp_sequence() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT nextval('temp_seq');
+END;
+ERROR:  cannot use temporary sequence temp_seq in SQL function with BEGIN ATOMIC
+DETAIL:  SQL functions with BEGIN ATOMIC cannot depend on temporary objects.
+-- this should fail: BEGIN ATOMIC SQL-functions cannot depend on temporary domains
+CREATE FUNCTION functest_temp_domain() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT 5::pg_temp.temp_domain;
+END;
+ERROR:  cannot use temporary type temp_domain in SQL function with BEGIN ATOMIC
+DETAIL:  SQL functions with BEGIN ATOMIC cannot depend on temporary objects.
+-- this should fail: BEGIN ATOMIC SQL-functions cannot contain parameters with temporary types
+CREATE FUNCTION functest_temp_parameter(foo temp_type) RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT 42;
+END;
+ERROR:  cannot use temporary type temp_type in SQL function with BEGIN ATOMIC
+DETAIL:  SQL functions with BEGIN ATOMIC cannot depend on temporary objects.
+-- this should fail: BEGIN ATOMIC SQL-functions cannot return temporary types
+CREATE FUNCTION functest_temp_return() RETURNS temp_type LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT NULL;
+END;
+ERROR:  cannot use temporary type temp_type in SQL function with BEGIN ATOMIC
+DETAIL:  SQL functions with BEGIN ATOMIC cannot depend on temporary objects.
+-- this should fail: BEGIN ATOMIC SQL-functions cannot contain array of temporary type as parameter
+CREATE FUNCTION functest_temp_array_param(foo temp_type[]) RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT 42;
+END;
+ERROR:  cannot use temporary type temp_type[] in SQL function with BEGIN ATOMIC
+DETAIL:  SQL functions with BEGIN ATOMIC cannot depend on temporary objects.
+-- this should fail: BEGIN ATOMIC SQL-functions cannot contain default parameter value referencing temporary object
+CREATE FUNCTION functest_temp_default(seq_val int DEFAULT nextval('temp_seq')) RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT seq_val;
+END;
+ERROR:  cannot use temporary sequence temp_seq in SQL function with BEGIN ATOMIC
+DETAIL:  SQL functions with BEGIN ATOMIC cannot depend on temporary objects.
+-- this should fail: BEGIN ATOMIC SQL-functions cannot return SETOF temporary type
+CREATE FUNCTION functest_temp_setof_return() RETURNS SETOF temp_type LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT NULL;
+END;
+ERROR:  cannot use temporary type temp_type in SQL function with BEGIN ATOMIC
+DETAIL:  SQL functions with BEGIN ATOMIC cannot depend on temporary objects.
 -- check reporting of parse-analysis errors
 CREATE FUNCTION functest_S_xx(x date) RETURNS boolean
     LANGUAGE SQL

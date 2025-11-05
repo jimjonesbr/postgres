@@ -24,6 +24,7 @@
 #include "catalog/pg_language.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_type.h"
 #include "executor/functions.h"
@@ -658,15 +659,47 @@ ProcedureCreate(const char *procedureName,
 		add_exact_object_address(&referenced, addrs);
 	}
 
+	/* dependency on SQL routine body */
+	if (languageObjectId == SQLlanguageId && prosqlbody)
+	{
+		collectDependenciesFromExpr(addrs, prosqlbody, NIL);
+
+		/* Also collect dependencies from parameter defaults */
+		if (parameterDefaults)
+			collectDependenciesFromExpr(addrs, (Node *) parameterDefaults, NIL);
+
+		/*
+		 * Check for temp objects before recording dependencies, but only
+		 * for SQL functions with BEGIN ATOMIC bodies.  We check for temp
+		 * objects here so that the check applies to all dependencies, not
+		 * just those from the SQL body.  For example, a function with a
+		 * temp table type as an argument or return type should be rejected,
+		 * not just one that references a temp table in its body.
+		 *
+		 * We skip the check if the function is being created in a temp
+		 * schema (in which case it's fine for it to depend on temp objects),
+		 * or if we're in bootstrap or binary upgrade mode (where we need to
+		 * restore whatever was in the dump without complaints).
+		 */
+		if (!IsBootstrapProcessingMode() && !IsBinaryUpgrade &&
+			!isAnyTempNamespace(procNamespace))
+			filter_temp_objects(addrs);
+	}
+
+	/*
+	 * Now record all dependencies at once.  This will also remove any
+	 * duplicates.
+	 */
 	record_object_address_dependencies(&myself, addrs, DEPENDENCY_NORMAL);
 	free_object_addresses(addrs);
 
-	/* dependency on SQL routine body */
-	if (languageObjectId == SQLlanguageId && prosqlbody)
-		recordDependencyOnExpr(&myself, prosqlbody, NIL, DEPENDENCY_NORMAL);
-
-	/* dependency on parameter default expressions */
-	if (parameterDefaults)
+	/*
+	 * Dependency on parameter default expressions, but only if we didn't
+	 * already handle them above.  For SQL functions with BEGIN ATOMIC bodies,
+	 * parameter defaults are included in the temp object check and recorded
+	 * above.
+	 */
+	if (parameterDefaults && (languageObjectId != SQLlanguageId || !prosqlbody))
 		recordDependencyOnExpr(&myself, (Node *) parameterDefaults,
 							   NIL, DEPENDENCY_NORMAL);
 
