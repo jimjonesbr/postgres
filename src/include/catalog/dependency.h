@@ -114,6 +114,9 @@ extern void recordDependencyOnExpr(const ObjectAddress *depender,
 								   Node *expr, List *rtable,
 								   DependencyType behavior);
 
+extern void collectDependenciesFromExpr(ObjectAddresses *addrs,
+										Node *expr, List *rtable);
+
 extern void recordDependencyOnSingleRelExpr(const ObjectAddress *depender,
 											Node *expr, Oid relId,
 											DependencyType behavior,
