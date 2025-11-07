@@ -36,6 +36,7 @@
 #include "catalog/pg_partitioned_table.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_statistic_ext.h"
+#include "catalog/pg_tablespace.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
@@ -547,6 +548,7 @@ static void get_json_table_nested_columns(TableFunc *tf, JsonTablePlan *plan,
 										  deparse_context *context,
 										  bool showimplicit,
 										  bool needcomma);
+static char *build_tablespace_ddl_string(const Oid tspaceoid);
 
 #define only_marker(rte)  ((rte)->inh ? "" : "ONLY ")
 
@@ -13743,4 +13745,156 @@ get_range_partbound_string(List *bound_datums)
 	appendStringInfoChar(&buf, ')');
 
 	return buf.data;
+}
+
+/*
+ * build_tablespace_ddl_string - Build CREATE TABLESPACE statement for
+ * a tablespace from its OID. This is internal version which helps
+ * pg_get_tablespace_ddl_name() and pg_get_tablespace_ddl_oid().
+ */
+static char *
+build_tablespace_ddl_string(const Oid tspaceoid)
+{
+	char	   *path;
+	char	   *spcowner;
+	bool		isNull;
+	Oid			tspowneroid;
+	Datum		datum;
+	HeapTuple	tuple;
+	StringInfoData buf;
+	Form_pg_tablespace tspForm;
+
+	/* Look up the tablespace in pg_tablespace */
+	tuple = SearchSysCache1(TABLESPACEOID, ObjectIdGetDatum(tspaceoid));
+
+	/* Confirm if tablespace OID was valid */
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("tablespace with oid %d does not exist",
+						tspaceoid)));
+
+	/* Get tablespace's details from its tuple */
+	tspForm = (Form_pg_tablespace) GETSTRUCT(tuple);
+
+	initStringInfo(&buf);
+
+	/* Start building the CREATE TABLESPACE statement */
+	appendStringInfo(&buf, "CREATE TABLESPACE %s",
+					 quote_identifier(NameStr(tspForm->spcname)));
+
+	/* Get the OID of the owner of the tablespace name */
+	tspowneroid = tspForm->spcowner;
+
+	/* Add OWNER clause, if the owner is not the current user */
+	if (GetUserId() != tspowneroid)
+	{
+		/* Get the owner name */
+		spcowner = GetUserNameFromId(tspowneroid, false);
+
+		appendStringInfo(&buf, " OWNER %s",
+						 quote_identifier(spcowner));
+		pfree(spcowner);
+	}
+
+	/* Find tablespace directory path */
+	path = get_tablespace_loc_string(tspaceoid);
+
+	/* Add directory LOCATION (path), if it exists */
+	if (path[0] != '\0')
+	{
+		/*
+		 * Special case: if the tablespace was created with GUC
+		 * "allow_in_place_tablespaces = true" and "LOCATION ''", path will
+		 * begin with "pg_tblspc/". In that case, show "LOCATION ''" as the
+		 * user originally specified.
+		 */
+		if (strncmp(PG_TBLSPC_DIR_SLASH, path, strlen(PG_TBLSPC_DIR_SLASH)) == 0)
+			appendStringInfoString(&buf, " LOCATION ''");
+		else
+			appendStringInfo(&buf, " LOCATION '%s'", path);
+	}
+	/* Done with path */
+	pfree(path);
+
+	/* Get tablespace's options datum from the tuple */
+	datum = SysCacheGetAttr(TABLESPACEOID,
+							tuple,
+							Anum_pg_tablespace_spcoptions,
+							&isNull);
+
+	if (!isNull)
+	{
+		ArrayType  *optarray;
+		Datum	   *optdatums;
+		int			optcount;
+		int			i;
+
+		optarray = DatumGetArrayTypeP(datum);
+
+		deconstruct_array_builtin(optarray, TEXTOID,
+								  &optdatums, NULL, &optcount);
+
+		Assert(optcount);
+
+		/* Start WITH clause */
+		appendStringInfoString(&buf, " WITH (");
+
+		for (i = 0; i < (optcount - 1); i++)	/* Skipping last option */
+		{
+			/* Add the options in WITH clause */
+			appendStringInfoString(&buf, TextDatumGetCString(optdatums[i]));
+			appendStringInfoString(&buf, ", ");
+		}
+
+		/* Adding the last remaining option */
+		appendStringInfoString(&buf, TextDatumGetCString(optdatums[i]));
+		/* Closing WITH clause */
+		appendStringInfoChar(&buf, ')');
+		/* Cleanup the datums found */
+		pfree(optdatums);
+	}
+
+	ReleaseSysCache(tuple);
+
+	/* Finally add semicolon to the statement */
+	appendStringInfoChar(&buf, ';');
+
+	return buf.data;
+}
+
+/*
+ * pg_get_tablespace_ddl_name - Get CREATE TABLESPACE statement for a
+ * tablespace. This takes name as parameter for pg_get_tablespace_ddl().
+ */
+Datum
+pg_get_tablespace_ddl_name(PG_FUNCTION_ARGS)
+{
+	Name		tspname = PG_GETARG_NAME(0);
+	Oid			tspaceoid;
+	char	   *ddl_stmt;
+
+	/* Get the OID of the tablespace from its name */
+	tspaceoid = get_tablespace_oid(NameStr(*tspname), false);
+
+	/* Get the CREATE TABLESPACE DDL statement from its OID */
+	ddl_stmt = build_tablespace_ddl_string(tspaceoid);
+
+	PG_RETURN_TEXT_P(string_to_text(ddl_stmt));
+}
+
+/*
+ * pg_get_tablespace_ddl_oid - Get CREATE TABLESPACE statement for a
+ * tablespace. This takes oid as parameter for pg_get_tablespace_ddl().
+ */
+Datum
+pg_get_tablespace_ddl_oid(PG_FUNCTION_ARGS)
+{
+	Oid			tspaceoid = PG_GETARG_OID(0);
+	char	   *ddl_stmt;
+
+	/* Get the CREATE TABLESPACE DDL statement from its OID */
+	ddl_stmt = build_tablespace_ddl_string(tspaceoid);
+
+	PG_RETURN_TEXT_P(string_to_text(ddl_stmt));
 }

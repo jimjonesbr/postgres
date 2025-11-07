@@ -437,3 +437,50 @@ DROP SCHEMA testschema CASCADE;
 
 DROP ROLE regress_tablespace_user1;
 DROP ROLE regress_tablespace_user2;
+
+-- Test pg_get_tablespace_ddl() by creating tablespaces with various
+-- configurations and checking the DDL.
+
+SET allow_in_place_tablespaces = true;
+
+-- create a tablespace using no options
+CREATE TABLESPACE regress_noopt_tblsp LOCATION ''; -- ok
+-- see that the tablespace ddl is correctly returned
+SELECT pg_get_tablespace_ddl('regress_noopt_tblsp');
+DROP TABLESPACE regress_noopt_tblsp;
+
+-- create a tablespace with a space in the name
+CREATE TABLESPACE "regress_ tblsp" LOCATION ''; -- ok
+-- see that the tablespace ddl is correctly returned
+SELECT pg_get_tablespace_ddl('regress_ tblsp');
+DROP TABLESPACE "regress_ tblsp";
+
+-- create a tablespace using one option
+CREATE TABLESPACE regress_oneopt_tblsp LOCATION '' WITH (random_page_cost = 3.0); -- ok
+-- see that the tablespace ddl is correctly returned
+SELECT pg_get_tablespace_ddl('regress_oneopt_tblsp');
+DROP TABLESPACE regress_oneopt_tblsp;
+
+-- create tablespace owned by a particular user
+CREATE USER regress_user;
+CREATE TABLESPACE regress_owner_tblsp OWNER regress_user LOCATION '' WITH (random_page_cost = 3.0); -- ok
+-- see that the tablespace ddl is correctly returned
+SELECT pg_get_tablespace_ddl('regress_owner_tblsp');
+DROP TABLESPACE regress_owner_tblsp;
+DROP USER regress_user;
+
+-- create a tablespace using all the options
+CREATE TABLESPACE regress_allopt_tblsp LOCATION '' WITH (seq_page_cost = 1.5, random_page_cost = 1.1234567890, effective_io_concurrency = 17, maintenance_io_concurrency = 18); -- ok
+-- see that the tablespace ddl is correctly returned
+SELECT pg_get_tablespace_ddl('regress_allopt_tblsp');
+DROP TABLESPACE regress_allopt_tblsp;
+
+-- see the pg_get_tablespace_ddl error for a dropped 'regress_allopt_tblsp'
+-- tablespace name
+SELECT pg_get_tablespace_ddl('regress_allopt_tblsp');
+
+-- see the pg_get_tablespace_ddl error for an empty input
+SELECT pg_get_tablespace_ddl('');
+
+-- see the pg_get_tablespace_ddl output for a NULL input
+SELECT pg_get_tablespace_ddl(NULL);

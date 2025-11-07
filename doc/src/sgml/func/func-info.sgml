@@ -3797,4 +3797,49 @@ acl      | {postgres=arwdDxtm/postgres,foo=r/postgres}
 
   </sect2>
 
+  <sect2 id="functions-get-object-ddl">
+   <title>Get Object DDL Functions</title>
+
+   <para>
+    The functions shown in <xref linkend="functions-get-object-ddl-table"/>
+    print the DDL statements for various database objects.
+    (This is a decompiled reconstruction, not the original text
+    of the command.)
+   </para>
+
+   <table id="functions-get-object-ddl-table">
+    <title>Get Object DDL Functions</title>
+    <tgroup cols="1">
+     <thead>
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        Function
+       </para>
+       <para>
+        Description
+       </para></entry>
+      </row>
+     </thead>
+
+     <tbody>
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_get_tablespace_ddl</primary>
+        </indexterm>
+        <function>pg_get_tablespace_ddl</function>
+        ( <parameter>tablespace</parameter> <type>name</type> )
+        <returnvalue>text</returnvalue>
+       </para>
+       <para>
+        Reconstructs the creating command for a tablespace.
+        The result is a complete <command>CREATE TABLESPACE</command> statement.
+       </para></entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+  </sect2>
+
   </sect1>
