@@ -18,6 +18,7 @@
 #include <ctype.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 
 #include "access/amapi.h"
 #include "access/htup_details.h"
