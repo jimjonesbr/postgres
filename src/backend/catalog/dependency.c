@@ -1554,25 +1554,57 @@ recordDependencyOnExpr(const ObjectAddress *depender,
 					   Node *expr, List *rtable,
 					   DependencyType behavior)
 {
+	ObjectAddresses *addrs;
+
+	addrs = new_object_addresses();
+
+	/* Collect all dependencies from the expression */
+	collectDependenciesOfExpr(addrs, expr, rtable);
+
+	/* Remove duplicates */
+	eliminate_duplicate_dependencies(addrs);
+
+	/* And record 'em */
+	recordMultipleDependencies(depender,
+							   addrs->refs, addrs->numrefs,
+							   behavior);
+
+	free_object_addresses(addrs);
+}
+
+/*
+ * collectDependenciesOfExpr - collect expression dependencies
+ *
+ * This function analyzes an expression or query in node-tree form to
+ * find all the objects it refers to (tables, columns, operators,
+ * functions, etc.) and adds them to the provided ObjectAddresses
+ * structure. Unlike recordDependencyOnExpr, this function does not
+ * immediately record the dependencies, allowing the caller to add to,
+ * filter, or modify the collected dependencies before recording them.
+ *
+ * rtable is the rangetable to be used to interpret Vars with varlevelsup=0.
+ * It can be NIL if no such variables are expected.
+ *
+ * Note: the returned list may well contain duplicates.  The caller should
+ * de-duplicate before recording the dependencies.  Within this file, callers
+ * must call eliminate_duplicate_dependencies().  External callers typically
+ * go through record_object_address_dependencies() which will see to that.
+ * This choice allows collecting dependencies from multiple sources without
+ * redundant de-duplication work.
+ */
+void
+collectDependenciesOfExpr(ObjectAddresses *addrs,
+						  Node *expr, List *rtable)
+{
 	find_expr_references_context context;
 
-	context.addrs = new_object_addresses();
+	context.addrs = addrs;
 
 	/* Set up interpretation for Vars at varlevelsup = 0 */
 	context.rtables = list_make1(rtable);
 
 	/* Scan the expression tree for referenceable objects */
 	find_expr_references_walker(expr, &context);
-
-	/* Remove any duplicates */
-	eliminate_duplicate_dependencies(context.addrs);
-
-	/* And record 'em */
-	recordMultipleDependencies(depender,
-							   context.addrs->refs, context.addrs->numrefs,
-							   behavior);
-
-	free_object_addresses(context.addrs);
 }
 
 /*
