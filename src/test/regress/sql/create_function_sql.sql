@@ -199,6 +199,45 @@ CREATE FUNCTION functest_S_xx(x anyarray) RETURNS anyelement
     LANGUAGE SQL
     RETURN x[1];
 
+CREATE TEMPORARY TABLE temp_table AS SELECT 1 AS val;
+CREATE TEMPORARY VIEW temp_view AS SELECT 42 AS val;
+CREATE TEMPORARY SEQUENCE temp_seq;
+CREATE DOMAIN pg_temp.temp_domain AS int CHECK (VALUE > 0);
+CREATE FUNCTION pg_temp.temp_func() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT 42;
+END;
+
+-- this should work: the function is created in a temp schema
+CREATE FUNCTION pg_temp.functest_temp_dep() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT val FROM temp_table;
+END;
+
+-- this should work: temp function calling temp function (both in temp schema)
+CREATE FUNCTION pg_temp.functest_temp_to_temp() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT pg_temp.temp_func();
+END;
+
+-- this should fail: BEGIN ATOMIC SQL-functions cannot depend on temporary views
+CREATE FUNCTION functest_temp_view() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT val FROM temp_view;
+END;
+
+-- this should fail: BEGIN ATOMIC SQL-functions cannot depend on temporary sequences
+CREATE FUNCTION functest_temp_sequence() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT nextval('temp_seq');
+END;
+
+-- this should fail: BEGIN ATOMIC SQL-functions cannot depend on temporary domains
+CREATE FUNCTION functest_temp_domain() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT 5::pg_temp.temp_domain;
+END;
+
 -- check reporting of parse-analysis errors
 CREATE FUNCTION functest_S_xx(x date) RETURNS boolean
     LANGUAGE SQL

@@ -22,6 +22,7 @@
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
+#include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_amop.h"
@@ -2432,6 +2433,47 @@ process_function_rte_ref(RangeTblEntry *rte, AttrNumber attnum,
 			(errcode(ERRCODE_UNDEFINED_COLUMN),
 			 errmsg("column %d of relation \"%s\" does not exist",
 					attnum, rte->eref->aliasname)));
+}
+
+/*
+ * find_temp_object - search an array of dependency references for temp objects
+ *
+ * Scan an ObjectAddresses array for references to temporary objects (objects
+ * in temporary namespaces), ignoring those in our own temp namespace if
+ * local_temp_okay is true.  If one is found, return true after storing its
+ * address in *foundobj.
+ *
+ * There's no need to identify all such objects; the caller will throw an
+ * error anyway, so identifying the first one seems sufficiently courteous.
+ * (We'd throw the error here, except we don't know the referencing object.)
+ */
+bool
+find_temp_object(const ObjectAddresses *addrs, bool local_temp_okay,
+				 ObjectAddress *foundobj)
+{
+	for (int i = 0; i < addrs->numrefs; i++)
+	{
+		const ObjectAddress *thisobj = addrs->refs + i;
+		Oid			objnamespace;
+
+		/*
+		 * Use get_object_namespace() to see if this object belongs to a
+		 * schema.  If not, we can skip it.
+		 */
+		objnamespace = get_object_namespace(thisobj);
+
+		/*
+		 * If the object is in a temporary namespace, complain, except if
+		 * local_temp_okay and it's our own temp namespace.
+		 */
+		if (OidIsValid(objnamespace) && isAnyTempNamespace(objnamespace) &&
+			!(local_temp_okay && isTempNamespace(objnamespace)))
+		{
+			*foundobj = *thisobj;
+			return true;
+		}
+	}
+	return false;
 }
 
 /*

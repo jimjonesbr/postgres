@@ -2,6 +2,11 @@
 -- Test INSERT/UPDATE/DELETE RETURNING
 --
 
+-- This script is full of poorly-chosen object names.
+-- Put them in a separate schema to avoid collisions with concurrent scripts.
+CREATE SCHEMA returning_test;
+SET search_path = returning_test, public;
+
 -- Simple cases
 
 CREATE TEMP TABLE foo (f1 serial, f2 text, f3 int default 42);
@@ -407,4 +412,7 @@ BEGIN ATOMIC
 END;
 
 \sf foo_update
-DROP FUNCTION foo_update;
+
+-- Clean up
+RESET search_path;
+DROP SCHEMA returning_test CASCADE;

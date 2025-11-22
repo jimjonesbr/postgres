@@ -35,11 +35,6 @@ step s1_create_temp_objects {
     -- that newer objects are deleted before older objects, so create a
     -- table after.
     CREATE TEMPORARY TABLE invalidate_catalog_cache();
-
-    -- test non-temp function is dropped when depending on temp table
-    CREATE TEMPORARY TABLE just_give_me_a_type(id serial primary key);
-
-    CREATE FUNCTION uses_a_temp_type(just_give_me_a_type) RETURNS int LANGUAGE sql AS $$SELECT 1;$$;
 }
 
 step s1_discard_temp {

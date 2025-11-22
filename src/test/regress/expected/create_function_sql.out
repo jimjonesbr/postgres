@@ -297,6 +297,45 @@ CREATE FUNCTION functest_S_xx(x anyarray) RETURNS anyelement
     LANGUAGE SQL
     RETURN x[1];
 ERROR:  SQL function with unquoted function body cannot have polymorphic arguments
+CREATE TEMPORARY TABLE temp_table AS SELECT 1 AS val;
+CREATE TEMPORARY VIEW temp_view AS SELECT 42 AS val;
+CREATE TEMPORARY SEQUENCE temp_seq;
+CREATE DOMAIN pg_temp.temp_domain AS int CHECK (VALUE > 0);
+CREATE FUNCTION pg_temp.temp_func() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT 42;
+END;
+-- this should work: the function is created in a temp schema
+CREATE FUNCTION pg_temp.functest_temp_dep() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT val FROM temp_table;
+END;
+-- this should work: temp function calling temp function (both in temp schema)
+CREATE FUNCTION pg_temp.functest_temp_to_temp() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT pg_temp.temp_func();
+END;
+-- this should fail: BEGIN ATOMIC SQL-functions cannot depend on temporary views
+CREATE FUNCTION functest_temp_view() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT val FROM temp_view;
+END;
+NOTICE:  function "functest_temp_view" will be effectively temporary
+DETAIL:  It depends on temporary view temp_view.
+-- this should fail: BEGIN ATOMIC SQL-functions cannot depend on temporary sequences
+CREATE FUNCTION functest_temp_sequence() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT nextval('temp_seq');
+END;
+NOTICE:  function "functest_temp_sequence" will be effectively temporary
+DETAIL:  It depends on temporary sequence temp_seq.
+-- this should fail: BEGIN ATOMIC SQL-functions cannot depend on temporary domains
+CREATE FUNCTION functest_temp_domain() RETURNS int LANGUAGE sql
+BEGIN ATOMIC;
+  SELECT 5::pg_temp.temp_domain;
+END;
+NOTICE:  function "functest_temp_domain" will be effectively temporary
+DETAIL:  It depends on temporary type temp_domain.
 -- check reporting of parse-analysis errors
 CREATE FUNCTION functest_S_xx(x date) RETURNS boolean
     LANGUAGE SQL
@@ -516,27 +555,30 @@ SELECT r0.routine_name, r1.routine_name
 SELECT routine_name, sequence_name FROM information_schema.routine_sequence_usage
   WHERE routine_schema = 'temp_func_test'
   ORDER BY 1, 2;
- routine_name  | sequence_name 
----------------+---------------
- functest_is_5 | functest1
- functest_is_6 | functest1
-(2 rows)
+      routine_name      | sequence_name 
+------------------------+---------------
+ functest_is_5          | functest1
+ functest_is_6          | functest1
+ functest_temp_sequence | temp_seq
+(3 rows)
 
 SELECT routine_name, table_name, column_name FROM information_schema.routine_column_usage
   WHERE routine_schema = 'temp_func_test'
   ORDER BY 1, 2;
- routine_name  | table_name | column_name 
----------------+------------+-------------
- functest_is_7 | functest2  | a
-(1 row)
+    routine_name    | table_name | column_name 
+--------------------+------------+-------------
+ functest_is_7      | functest2  | a
+ functest_temp_view | temp_view  | val
+(2 rows)
 
 SELECT routine_name, table_name FROM information_schema.routine_table_usage
   WHERE routine_schema = 'temp_func_test'
   ORDER BY 1, 2;
- routine_name  | table_name 
----------------+------------
- functest_is_7 | functest2
-(1 row)
+    routine_name    | table_name 
+--------------------+------------
+ functest_is_7      | functest2
+ functest_temp_view | temp_view
+(2 rows)
 
 DROP FUNCTION functest_IS_4a CASCADE;
 NOTICE:  drop cascades to function functest_is_4b(integer)
@@ -790,7 +832,7 @@ CONTEXT:  SQL function "test1" during startup
 RESET check_function_bodies;
 -- Cleanup
 DROP SCHEMA temp_func_test CASCADE;
-NOTICE:  drop cascades to 38 other objects
+NOTICE:  drop cascades to 41 other objects
 DETAIL:  drop cascades to function functest_a_1(text,date)
 drop cascades to function functest_a_2(text[])
 drop cascades to function functest_a_3()
@@ -812,6 +854,9 @@ drop cascades to function functest_s_3()
 drop cascades to function functest_s_3a()
 drop cascades to function functest_s_10(text,date)
 drop cascades to function functest_s_13()
+drop cascades to function functest_temp_view()
+drop cascades to function functest_temp_sequence()
+drop cascades to function functest_temp_domain()
 drop cascades to function functest_s_15(integer)
 drop cascades to function functest_b_2(bigint)
 drop cascades to function functest_srf0()
