@@ -99,6 +99,7 @@
 #include "utils/date.h"
 #include "utils/datetime.h"
 #include "utils/lsyscache.h"
+#include "utils/numeric.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/xml.h"
@@ -2574,9 +2575,9 @@ map_sql_value_to_xml_value(Datum value, Oid type, bool xml_escape_strings)
 		{
 			case BOOLOID:
 				if (DatumGetBool(value))
-					return "true";
+					return pstrdup("true");
 				else
-					return "false";
+					return pstrdup("false");
 
 			case DATEOID:
 				{
@@ -2706,8 +2707,60 @@ map_sql_value_to_xml_value(Datum value, Oid type, bool xml_escape_strings)
 				}
 #endif							/* USE_LIBXML */
 
-		}
+			case FLOAT4OID:
+				/*
+				 * Special handling for infinity values in floating-point and
+				 * numeric types. The XML Schema specification requires that
+				 * positive infinity be represented as "INF" and negative
+				 * infinity as "-INF" in XML documents for float and double
+				 * types. While decimal types in XML Schema do not support
+				 * infinity, PostgreSQL's NUMERIC type can represent it, so
+				 * we use the same representation for consistency.
+				 *
+				 * See: XML Schema Part 2: Datatypes Second Edition, sections
+				 * 3.2.4 (float) and 3.2.5 (double).
+				 */
+				{
+					float4		val = DatumGetFloat4(value);
 
+					if (isinf(val))
+					{
+						if (val < 0)
+							return pstrdup("-INF");
+						else
+							return pstrdup("INF");
+					}
+				}
+				break;
+
+			case FLOAT8OID:
+				{
+					float8		val = DatumGetFloat8(value);
+
+					if (isinf(val))
+					{
+						if (val < 0)
+							return pstrdup("-INF");
+						else
+							return pstrdup("INF");
+					}
+				}
+				break;
+
+			case NUMERICOID:
+				{
+					Numeric		num = DatumGetNumeric(value);
+
+					if (numeric_is_inf(num))
+					{
+						if (numeric_is_positive_inf(num))
+							return pstrdup("INF");
+						else
+							return pstrdup("-INF");
+					}
+				}
+				break;
+		}
 		/*
 		 * otherwise, just use the type's native text representation
 		 */
@@ -2762,6 +2815,67 @@ escape_xml(const char *str)
 	return buf.data;
 }
 
+/*
+ * Unescape XML escaped characters.
+ *
+ * In order to keep it consistent with "escape_xml(const char*)",
+ * this function intentionally does not depend on libxml2.
+ */
+char *
+unescape_xml(const char *str)
+{
+	StringInfoData buf;
+	size_t p = 0;
+	size_t len;
+
+	if (!str)
+		return NULL;
+
+	len = strlen(str);
+
+	initStringInfo(&buf);
+
+	while (p < len)
+	{
+		if (p + 4 <= len && strncmp(str + p, "&lt;", 4) == 0)
+		{
+			appendStringInfoChar(&buf, '<');
+			p += 4;
+		}
+		else if (p + 4 <= len && strncmp(str + p, "&gt;", 4) == 0)
+		{
+			appendStringInfoChar(&buf, '>');
+			p += 4;
+		}
+		else if (p + 5 <= len && strncmp(str + p, "&amp;", 5) == 0)
+		{
+			appendStringInfoChar(&buf, '&');
+			p += 5;
+		}
+		else if (p + 5 <= len && strncmp(str + p, "&#13;", 5) == 0)
+		{
+			appendStringInfoChar(&buf, '\r');
+			p += 5;
+		}
+		else if (p + 6 <= len && strncmp(str + p, "&quot;", 6) == 0)
+		{
+			appendStringInfoChar(&buf, '"');
+			p += 6;
+		}
+		else if (p + 6 <= len && strncmp(str + p, "&#x0D;", 6) == 0)
+		{
+			appendStringInfoChar(&buf, '\r');
+			p += 6;
+		}
+		else
+		{
+			appendStringInfoChar(&buf, *(str + p));
+			p++;
+		}
+	}
+
+	return buf.data;
+}
 
 static char *
 _SPI_strdup(const char *s)
@@ -4350,6 +4464,7 @@ xml_xpathobjtoxmlarray(xmlXPathObjectPtr xpathobj,
 	datum = PointerGetDatum(cstring_to_xmltype(result_str));
 	(void) accumArrayResult(astate, datum, false,
 							XMLOID, CurrentMemoryContext);
+	pfree(result_str);
 	return 1;
 }
 

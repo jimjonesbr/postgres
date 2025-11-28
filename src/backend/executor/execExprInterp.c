@@ -69,6 +69,7 @@
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/date.h"
+#include "utils/datetime.h"
 #include "utils/datum.h"
 #include "utils/expandedrecord.h"
 #include "utils/json.h"
@@ -4643,11 +4644,139 @@ ExecEvalXmlExpr(ExprState *state, ExprEvalStep *op)
 				*op->resnull = false;
 			}
 			break;
+			case IS_XMLCAST:
+			{
+				Datum *argvalue = op->d.xmlexpr.argvalue;
+				bool *argnull = op->d.xmlexpr.argnull;
+				char *str;
 
-		default:
-			elog(ERROR, "unrecognized XML operation");
+				Assert(list_length(xexpr->args) == 1);
+
+				if (argnull[0])
+					return;
+
+				value = argvalue[0];
+
+				switch (xexpr->targetType)
+				{
+				case XMLOID:
+					/*
+					 * Certain SQL data types must be mapped to XML Schema types when casting to XML:
+					 *   - DATE                        -> xs:date
+					 *   - TIME [WITH/WITHOUT TZ]      -> xs:time
+					 *   - TIMESTAMP [WITH/WITHOUT TZ] -> xs:dateTime
+					 *   - BOOLEAN                     -> xs:boolean ("true"/"false")
+					 *   - BYTEA                       -> xs:base64Binary or xs:hexBinary
+					 *   - FLOAT/DOUBLE/NUMERIC        -> xs:float/double/decimal (with INF/-INF handling)
+					 *
+					 * These mappings are defined in SQL/XML:2023 (ISO/IEC 9075-14:2023),
+					 * Subclause 6.7 "<XML cast specification>", Syntax Rules, item 15.e.i–v.
+					 *
+					 * The corresponding XML Schema lexical formats follow ISO 8601 and are specified in
+					 * W3C XML Schema Part 2: Primitive Datatypes:
+					 *   - §3.2.7 (dateTime): "2023-05-19T14:30:00+01:00"
+					 *   - §3.2.8 (time): "14:30:00Z"
+					 *   - §3.2.9 (date): "2023-05-19"
+					 *   - §3.2.2 (boolean): "true"/"false"
+					 *   - §3.2.16 (base64Binary/hexBinary): base64/hex encoded strings
+					 *   - §3.2.4 (float) and §3.2.5 (double): with "INF"/"-INF" for infinity
+					 */
+					if (xexpr->type == TIMESTAMPOID || xexpr->type == TIMESTAMPTZOID ||
+						xexpr->type == DATEOID || xexpr->type == BYTEAOID || xexpr->type == BOOLOID ||
+						xexpr->type == FLOAT4OID || xexpr->type == FLOAT8OID || xexpr->type == NUMERICOID)
+					{
+						char *strdt = map_sql_value_to_xml_value(value, xexpr->type, false);
+						text *mapped_value = cstring_to_text(strdt);
+						pfree(strdt);
+						*op->resvalue = PointerGetDatum(mapped_value);
+					}
+					/*
+					 * SQL interval types must be mapped to XML Schema types when casting to XML:
+					 *   - Year-month intervals → xs:yearMonthDuration
+					 *   - Day-time intervals   → xs:dayTimeDuration
+					 *
+					 * This behavior is required by SQL/XML:2023 (ISO/IEC 9075-14:2023),
+					 * Subclause 6.7 "<XML cast specification>", General Rules, item 3.d.ii.1–2.
+					 *
+					 * These XML Schema types require ISO 8601-compatible lexical representations,
+					 * such as: "P1Y2M", "P3DT4H5M", or "P1Y2M3DT4H5M6S", as defined in
+					 * W3C XML Schema Part 2: Primitive Datatypes, §3.2.6 (duration)
+					 */
+					else if (xexpr->type == INTERVALOID)
+					{
+						Interval *in = DatumGetIntervalP(value);
+
+						struct pg_itm tt, *itm = &tt;
+						char buf[MAXDATELEN + 1];
+
+						if (INTERVAL_NOT_FINITE(in))
+						{
+							if (INTERVAL_IS_NOBEGIN(in))
+								strcpy(buf, EARLY);
+							else if (INTERVAL_IS_NOEND(in))
+								strcpy(buf, LATE);
+							else
+								elog(ERROR, "invalid interval argument");
+						}
+						else
+						{
+							interval2itm(*in, itm);
+							EncodeInterval(itm, INTSTYLE_ISO_8601, buf);
+						}
+
+						*op->resvalue = PointerGetDatum(cstring_to_text(buf));
+					}
+					/* no need to escape the result, as the origin is also an XML */
+					else if (xexpr->type == XMLOID)
+						*op->resvalue = PointerGetDatum(DatumGetXmlP(value));
+					/* we  make sure that potential predifined entitties are escaped */
+					else
+						*op->resvalue = PointerGetDatum(
+							DatumGetXmlP((DirectFunctionCall1(xmltext, value))));
+					break;
+				case TEXTOID:
+				case VARCHAROID:
+				case NAMEOID:
+				case BPCHAROID:
+					/*
+					 * when casting from XML to a character string we make sure that
+					 * all escaped xml characters are unescaped.
+					 */
+					str = text_to_cstring(DatumGetTextPP(value));
+					{
+						char *unescaped = unescape_xml(str);
+						*op->resvalue = PointerGetDatum(cstring_to_text(unescaped));
+						pfree(unescaped);
+					}
+					pfree(str);
+					break;
+				case INT2OID:
+				case INT4OID:
+				case INT8OID:
+				case NUMERICOID:
+				case FLOAT4OID:
+				case FLOAT8OID:
+				case BOOLOID:
+				case TIMESTAMPOID:
+				case TIMESTAMPTZOID:
+				case TIMEOID:
+				case TIMETZOID:
+				case DATEOID:
+				case BYTEAOID:
+				case INTERVALOID:
+					*op->resvalue = PointerGetDatum(DatumGetTextP(value));
+					break;
+				default:
+					elog(ERROR, "unsupported target data type for XMLCast");
+				}
+
+				*op->resnull = false;
+			}
 			break;
-	}
+			default:
+				elog(ERROR, "unrecognized XML operation");
+				break;
+			}
 }
 
 /*

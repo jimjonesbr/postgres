@@ -40,6 +40,37 @@
 #include "utils/timestamp.h"
 #include "utils/xml.h"
 
+/*
+ * Determines whether a type category is allowed in XMLCAST conversions,
+ * either as a source (SQL -> XML) or target (XML -> SQL) type.
+ *
+ * Based on SQL/XML:2023 (ISO/IEC 9075-14:2023),
+ * Subclause 6.7 "<XML cast specification>", General Rules, item 3.d.ii:
+ *
+ * - Items 1–2 explicitly describe interval mappings:
+ *     1) Year-month intervals -> xs:yearMonthDuration
+ *     2) Day-time intervals   -> xs:dayTimeDuration
+ *
+ * - Items 3–4 describe the general case:
+ *     3) If the target XML type is an XML Schema built-in data type,
+ *     or
+ *     4) If it is derived from a built-in atomic type,
+ *     then that type (or its base type) governs the conversion.
+ *
+ * These built-in and atomic types are defined in "W3C XML Schema Part 2:
+ * Datatypes", and include types such as xs:boolean, xs:decimal, xs:date,
+ * xs:dateTime, and xs:string. While SQL/XML does not enumerate mappings
+ * for all these types, it relies on their existence and semantics to
+ * support conversions.
+ *
+ * As such, PostgreSQL allows casting to and from types in the following
+ * categories: numeric, string, datetime, boolean, and timespan.
+ */
+#define type_is_xmlcast_supported(x) ((x) == TYPCATEGORY_NUMERIC \
+			|| (x) == TYPCATEGORY_STRING || (x) == TYPCATEGORY_DATETIME \
+			|| (x) == TYPCATEGORY_BOOLEAN || (x) == TYPCATEGORY_UNKNOWN \
+			|| (x) == TYPCATEGORY_TIMESPAN)
+
 /* GUC parameters */
 bool		Transform_null_equals = false;
 
@@ -67,6 +98,7 @@ static Node *transformMinMaxExpr(ParseState *pstate, MinMaxExpr *m);
 static Node *transformSQLValueFunction(ParseState *pstate,
 									   SQLValueFunction *svf);
 static Node *transformXmlExpr(ParseState *pstate, XmlExpr *x);
+static Node *transformXmlCast(ParseState *pstate, XmlCast *xc);
 static Node *transformXmlSerialize(ParseState *pstate, XmlSerialize *xs);
 static Node *transformBooleanTest(ParseState *pstate, BooleanTest *b);
 static Node *transformCurrentOfExpr(ParseState *pstate, CurrentOfExpr *cexpr);
@@ -273,6 +305,10 @@ transformExprRecurse(ParseState *pstate, Node *expr)
 		case T_SQLValueFunction:
 			result = transformSQLValueFunction(pstate,
 											   (SQLValueFunction *) expr);
+			break;
+
+		case T_XmlCast:
+			result = transformXmlCast(pstate, (XmlCast *) expr);
 			break;
 
 		case T_XmlExpr:
@@ -2467,6 +2503,10 @@ transformXmlExpr(ParseState *pstate, XmlExpr *x)
 					newe = coerce_to_specific_type(pstate, newe, INT4OID,
 												   "XMLROOT");
 				break;
+			case IS_XMLCAST:
+				/* not handled here */
+				Assert(false);
+				break;
 			case IS_XMLSERIALIZE:
 				/* not handled here */
 				Assert(false);
@@ -2481,6 +2521,75 @@ transformXmlExpr(ParseState *pstate, XmlExpr *x)
 	}
 
 	return (Node *) newx;
+}
+
+static Node *
+transformXmlCast(ParseState *pstate, XmlCast *xc)
+{
+	Node *result;
+	XmlExpr *xexpr;
+	int32 targetTypmod;
+	Oid targetType;
+	Oid inputType;
+	char inputTypcategory;
+	char targetTypcategory;
+	bool inputTypispreferred;
+	bool targetTypispreferred;
+
+	inputType = exprType(transformExprRecurse(pstate, xc->expr));
+	get_type_category_preferred(inputType, &inputTypcategory, &inputTypispreferred);
+
+	typenameTypeIdAndMod(pstate, xc->targetType, &targetType, &targetTypmod);
+	get_type_category_preferred(targetType, &targetTypcategory, &targetTypispreferred);
+
+	/*
+	 * Ensure that either the cast operand or the data type is an XML,
+	 * and check if the data types are supported.
+	 */
+	if ((inputType != XMLOID && targetType != XMLOID) ||
+		(!type_is_xmlcast_supported(inputTypcategory) && inputType != XMLOID && inputType != BYTEAOID) ||
+		(!type_is_xmlcast_supported(targetTypcategory) && targetType != XMLOID && targetType != BYTEAOID))
+		ereport(ERROR,
+				(errcode(ERRCODE_CANNOT_COERCE),
+				 errmsg("cannot cast from '%s' to '%s'",
+						format_type_be(inputType), format_type_be(targetType)),
+				 parser_errposition(pstate, xc->location)));
+
+	/*
+	 * It is not possible to cast some supported data types directly to XML,
+	 * so we first handle them as text and later on return them as XML.
+	 */
+	if ((inputTypcategory == TYPCATEGORY_NUMERIC && inputType != FLOAT4OID &&
+		inputType != FLOAT8OID && inputType != NUMERICOID) || inputType == TIMEOID ||
+		inputType == TIMETZOID || inputType == UNKNOWNOID || inputType == NAMEOID)
+		inputType = TEXTOID;
+
+	xexpr = makeNode(XmlExpr);
+	xexpr->op = IS_XMLCAST;
+	xexpr->location = xc->location;
+	xexpr->type = inputType;
+	xexpr->targetType = targetType;
+	xexpr->name = "xmlcast";
+	xexpr->args = list_make1(coerce_to_specific_type(pstate,
+													 transformExprRecurse(pstate, xc->expr),
+													 inputType,
+													 "XMLCAST"));
+
+	result = coerce_to_target_type(pstate, (Node *) xexpr,
+								   targetType == TEXTOID ? XMLOID : TEXTOID,
+								   targetType, targetTypmod,
+								   COERCION_EXPLICIT,
+								   COERCE_EXPLICIT_CAST,
+								   -1);
+
+	if (result == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_CANNOT_COERCE),
+				 errmsg("cannot cast XMLCAST result to %s",
+						format_type_be(targetType)),
+				 parser_errposition(pstate, xexpr->location)));
+
+	return result;
 }
 
 static Node *
