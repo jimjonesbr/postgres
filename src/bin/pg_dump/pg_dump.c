@@ -311,6 +311,7 @@ static void dumpAccessMethod(Archive *fout, const AccessMethodInfo *aminfo);
 static void dumpOpclass(Archive *fout, const OpclassInfo *opcinfo);
 static void dumpOpfamily(Archive *fout, const OpfamilyInfo *opfinfo);
 static void dumpCollation(Archive *fout, const CollInfo *collinfo);
+static void dumpXmlSchema(Archive *fout, const XmlSchemaInfo * xmlschemainfo);
 static void dumpConversion(Archive *fout, const ConvInfo *convinfo);
 static void dumpRule(Archive *fout, const RuleInfo *rinfo);
 static void dumpAgg(Archive *fout, const AggInfo *agginfo);
@@ -6577,6 +6578,62 @@ getConversions(Archive *fout)
 }
 
 /*
+ * getXmlSchemas:
+ *	  get information about all XML schemas in the system catalogs
+ */
+void
+getXmlSchemas(Archive *fout)
+{
+	PGresult   *res;
+	int			ntups;
+	int			i;
+	PQExpBuffer query;
+	XmlSchemaInfo *xmlschemainfo;
+	int			i_tableoid;
+	int			i_oid;
+	int			i_schemaname;
+	int			i_schemanamespace;
+	int			i_schemaowner;
+
+	query = createPQExpBuffer();
+
+	appendPQExpBufferStr(query, "SELECT tableoid, oid, schemaname, "
+						 "schemanamespace, "
+						 "schemaowner "
+						 "FROM pg_xmlschema");
+
+	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+
+	ntups = PQntuples(res);
+
+	xmlschemainfo = (XmlSchemaInfo *) pg_malloc(ntups * sizeof(XmlSchemaInfo));
+
+	i_tableoid = PQfnumber(res, "tableoid");
+	i_oid = PQfnumber(res, "oid");
+	i_schemaname = PQfnumber(res, "schemaname");
+	i_schemanamespace = PQfnumber(res, "schemanamespace");
+	i_schemaowner = PQfnumber(res, "schemaowner");
+
+	for (i = 0; i < ntups; i++)
+	{
+		xmlschemainfo[i].dobj.objType = DO_XMLSCHEMA;
+		xmlschemainfo[i].dobj.catId.tableoid = atooid(PQgetvalue(res, i, i_tableoid));
+		xmlschemainfo[i].dobj.catId.oid = atooid(PQgetvalue(res, i, i_oid));
+		AssignDumpId(&xmlschemainfo[i].dobj);
+		xmlschemainfo[i].dobj.name = pg_strdup(PQgetvalue(res, i, i_schemaname));
+		xmlschemainfo[i].dobj.namespace =
+			findNamespace(atooid(PQgetvalue(res, i, i_schemanamespace)));
+		xmlschemainfo[i].rolname = getRoleName(PQgetvalue(res, i, i_schemaowner));
+
+		selectDumpableObject(&(xmlschemainfo[i].dobj), fout);
+	}
+
+	PQclear(res);
+
+	destroyPQExpBuffer(query);
+}
+
+/*
  * getAccessMethods:
  *	  get information about all user-defined access methods
  */
@@ -11726,6 +11783,9 @@ dumpDumpableObject(Archive *fout, DumpableObject *dobj)
 		case DO_CONVERSION:
 			dumpConversion(fout, (const ConvInfo *) dobj);
 			break;
+		case DO_XMLSCHEMA:
+			dumpXmlSchema(fout, (const XmlSchemaInfo *) dobj);
+			break;
 		case DO_TABLE:
 			dumpTable(fout, (const TableInfo *) dobj);
 			break;
@@ -15250,6 +15310,73 @@ dumpCollation(Archive *fout, const CollInfo *collinfo)
 	destroyPQExpBuffer(q);
 	destroyPQExpBuffer(delq);
 	free(qcollname);
+}
+
+/*
+ * dumpXmlSchema
+ *	  write out a single XML schema definition
+ */
+static void
+dumpXmlSchema(Archive *fout, const XmlSchemaInfo * xmlschemainfo)
+{
+	DumpOptions *dopt = fout->dopt;
+	PQExpBuffer query;
+	PQExpBuffer q;
+	PQExpBuffer delq;
+	char	   *qxmlschemaname;
+	PGresult   *res;
+	int			i_schemadata;
+	char	   *schemadata;
+
+	if (!dopt->dumpSchema)
+		return;
+
+	query = createPQExpBuffer();
+	q = createPQExpBuffer();
+	delq = createPQExpBuffer();
+
+	qxmlschemaname = pg_strdup(fmtId(xmlschemainfo->dobj.name));
+
+	appendPQExpBuffer(query,
+					  "SELECT schemadata "
+					  "FROM pg_catalog.pg_xmlschema "
+					  "WHERE oid = '%u'::pg_catalog.oid",
+					  xmlschemainfo->dobj.catId.oid);
+
+	res = ExecuteSqlQueryForSingleRow(fout, query->data);
+
+	i_schemadata = PQfnumber(res, "schemadata");
+	schemadata = PQgetvalue(res, 0, i_schemadata);
+
+	appendPQExpBuffer(delq, "DROP XMLSCHEMA %s;\n",
+					  fmtQualifiedDumpable(xmlschemainfo));
+
+	appendPQExpBuffer(q, "CREATE XMLSCHEMA %s AS ",
+					  fmtQualifiedDumpable(xmlschemainfo));
+	appendStringLiteralAH(q, schemadata, fout);
+	appendPQExpBufferStr(q, ";\n");
+
+	if (xmlschemainfo->dobj.dump & DUMP_COMPONENT_DEFINITION)
+		ArchiveEntry(fout, xmlschemainfo->dobj.catId, xmlschemainfo->dobj.dumpId,
+					 ARCHIVE_OPTS(.tag = xmlschemainfo->dobj.name,
+								  .namespace = xmlschemainfo->dobj.namespace->dobj.name,
+								  .owner = xmlschemainfo->rolname,
+								  .description = "XMLSCHEMA",
+								  .section = SECTION_PRE_DATA,
+								  .createStmt = q->data,
+								  .dropStmt = delq->data));
+
+	if (xmlschemainfo->dobj.dump & DUMP_COMPONENT_COMMENT)
+		dumpComment(fout, "XMLSCHEMA", qxmlschemaname,
+					xmlschemainfo->dobj.namespace->dobj.name, xmlschemainfo->rolname,
+					xmlschemainfo->dobj.catId, 0, xmlschemainfo->dobj.dumpId);
+
+	PQclear(res);
+
+	destroyPQExpBuffer(query);
+	destroyPQExpBuffer(q);
+	destroyPQExpBuffer(delq);
+	free(qxmlschemaname);
 }
 
 /*
@@ -20422,6 +20549,7 @@ addBoundaryDependencies(DumpableObject **dobjs, int numObjs,
 			case DO_OPFAMILY:
 			case DO_COLLATION:
 			case DO_CONVERSION:
+			case DO_XMLSCHEMA:
 			case DO_TABLE:
 			case DO_TABLE_ATTACH:
 			case DO_ATTRDEF:

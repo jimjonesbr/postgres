@@ -2318,6 +2318,7 @@ stringify_grant_objtype(ObjectType objtype)
 		case OBJECT_TSTEMPLATE:
 		case OBJECT_USER_MAPPING:
 		case OBJECT_VIEW:
+		case OBJECT_XMLSCHEMA:
 			elog(ERROR, "unsupported object type: %d", (int) objtype);
 	}
 
@@ -2402,6 +2403,7 @@ stringify_adefprivs_objtype(ObjectType objtype)
 		case OBJECT_TSTEMPLATE:
 		case OBJECT_USER_MAPPING:
 		case OBJECT_VIEW:
+		case OBJECT_XMLSCHEMA:
 			elog(ERROR, "unsupported object type: %d", (int) objtype);
 	}
 

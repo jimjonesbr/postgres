@@ -62,6 +62,7 @@
 #include "catalog/pg_ts_template.h"
 #include "catalog/pg_type.h"
 #include "catalog/pg_user_mapping.h"
+#include "catalog/pg_xmlschema.h"
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
 #include "commands/extension.h"
@@ -185,6 +186,20 @@ static const ObjectPropertyType ObjectProperty[] =
 		Anum_pg_collation_collowner,
 		InvalidAttrNumber,
 		OBJECT_COLLATION,
+		true
+	},
+	{
+		"xmlschema",
+		XmlSchemaRelationId,
+		XmlSchemaOidIndexId,
+		XMLSCHEMAOID,
+		XMLSCHEMANAMENSP,
+		Anum_pg_xmlschema_oid,
+		Anum_pg_xmlschema_schemaname,
+		Anum_pg_xmlschema_schemanamespace,
+		Anum_pg_xmlschema_schemaowner,
+		Anum_pg_xmlschema_schemaacl,
+		OBJECT_XMLSCHEMA,
 		true
 	},
 	{
@@ -721,6 +736,9 @@ static const struct object_type_map
 		"collation", OBJECT_COLLATION
 	},
 	{
+		"xmlschema", OBJECT_XMLSCHEMA
+	},
+	{
 		"table constraint", OBJECT_TABCONSTRAINT
 	},
 	{
@@ -1027,6 +1045,11 @@ get_object_address(ObjectType objtype, Node *object,
 			case OBJECT_COLLATION:
 				address.classId = CollationRelationId;
 				address.objectId = get_collation_oid(castNode(List, object), missing_ok);
+				address.objectSubId = 0;
+				break;
+			case OBJECT_XMLSCHEMA:
+				address.classId = XmlSchemaRelationId;
+				address.objectId = get_xmlschema_oid(castNode(List, object), missing_ok);
 				address.objectSubId = 0;
 				break;
 			case OBJECT_CONVERSION:
@@ -2282,6 +2305,7 @@ pg_get_object_address(PG_FUNCTION_ARGS)
 		case OBJECT_COLUMN:
 		case OBJECT_ATTRIBUTE:
 		case OBJECT_COLLATION:
+		case OBJECT_XMLSCHEMA:
 		case OBJECT_CONVERSION:
 		case OBJECT_STATISTIC_EXT:
 		case OBJECT_TSPARSER:
@@ -2460,6 +2484,7 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 							   strVal(object));
 			break;
 		case OBJECT_COLLATION:
+		case OBJECT_XMLSCHEMA:
 		case OBJECT_CONVERSION:
 		case OBJECT_OPCLASS:
 		case OBJECT_OPFAMILY:
@@ -4067,6 +4092,34 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				break;
 			}
 
+		case XmlSchemaRelationId:
+			{
+				HeapTuple	schemaTup;
+				Form_pg_xmlschema schema;
+				char	   *nspname;
+
+				schemaTup = SearchSysCache1(XMLSCHEMAOID,
+											ObjectIdGetDatum(object->objectId));
+				if (!HeapTupleIsValid(schemaTup))
+				{
+					if (!missing_ok)
+						elog(ERROR, "cache lookup failed for XML schema %u",
+							 object->objectId);
+					break;
+				}
+
+				schema = (Form_pg_xmlschema) GETSTRUCT(schemaTup);
+
+				/* Qualify the name if not visible in search path */
+				nspname = get_namespace_name(schema->schemanamespace);
+
+				appendStringInfo(&buffer, _("XML schema %s"),
+								 quote_qualified_identifier(nspname,
+															NameStr(schema->schemaname)));
+				ReleaseSysCache(schemaTup);
+				break;
+			}
+
 		default:
 			elog(ERROR, "unsupported object class: %u", object->classId);
 	}
@@ -4667,6 +4720,10 @@ getObjectTypeDescription(const ObjectAddress *object, bool missing_ok)
 
 		case TransformRelationId:
 			appendStringInfoString(&buffer, "transform");
+			break;
+
+		case XmlSchemaRelationId:
+			appendStringInfoString(&buffer, "XML schema");
 			break;
 
 		default:
@@ -6018,6 +6075,33 @@ getObjectIdentityParts(const ObjectAddress *object,
 				table_close(transformDesc, AccessShareLock);
 			}
 			break;
+
+		case XmlSchemaRelationId:
+			{
+				HeapTuple	schemaTup;
+				Form_pg_xmlschema schema;
+				char	   *nspname;
+
+				schemaTup = SearchSysCache1(XMLSCHEMAOID,
+											ObjectIdGetDatum(object->objectId));
+				if (!HeapTupleIsValid(schemaTup))
+				{
+					if (!missing_ok)
+						elog(ERROR, "cache lookup failed for XML schema %u",
+							 object->objectId);
+					break;
+				}
+				schema = (Form_pg_xmlschema) GETSTRUCT(schemaTup);
+				nspname = get_namespace_name_or_temp(schema->schemanamespace);
+				appendStringInfoString(&buffer,
+									   quote_qualified_identifier(nspname,
+																  NameStr(schema->schemaname)));
+				if (objname)
+					*objname = list_make2(nspname,
+										  pstrdup(NameStr(schema->schemaname)));
+				ReleaseSysCache(schemaTup);
+				break;
+			}
 
 		default:
 			elog(ERROR, "unsupported object class: %u", object->classId);

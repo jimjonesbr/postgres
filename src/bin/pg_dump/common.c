@@ -182,6 +182,9 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 	pg_log_info("reading user-defined conversions");
 	getConversions(fout);
 
+	pg_log_info("reading XML schemas");
+	getXmlSchemas(fout);
+
 	pg_log_info("reading type casts");
 	getCasts(fout);
 

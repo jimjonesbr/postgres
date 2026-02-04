@@ -1,0 +1,145 @@
+<!--
+doc/src/sgml/ref/alter_xmlschema.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="sql-alterxmlschema">
+ <indexterm zone="sql-alterxmlschema">
+  <primary>ALTER XMLSCHEMA</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>ALTER XMLSCHEMA</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>ALTER XMLSCHEMA</refname>
+  <refpurpose>change the definition of an XML schema</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+ALTER XMLSCHEMA [ IF EXISTS ] <replaceable class="parameter">name</replaceable> OWNER TO { <replaceable class="parameter">new_owner</replaceable> | CURRENT_ROLE | CURRENT_USER | SESSION_USER }
+ALTER XMLSCHEMA [ IF EXISTS ] <replaceable class="parameter">name</replaceable> RENAME TO <replaceable class="parameter">new_name</replaceable>
+ALTER XMLSCHEMA [ IF EXISTS ] <replaceable class="parameter">name</replaceable> SET SCHEMA <replaceable class="parameter">new_schema</replaceable>
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   <command>ALTER XMLSCHEMA</command> changes the definition of an XML schema.
+  </para>
+
+  <para>
+   You must own the XML schema to use <command>ALTER XMLSCHEMA</command>.
+   To change an XML schema's schema, you must also have <literal>CREATE</literal>
+   privilege on the new schema.
+   To alter the owner, you must be able to <literal>SET ROLE</literal> to the
+   new owning role, and that role must have <literal>CREATE</literal>
+   privilege on the XML schema's schema.
+   (These restrictions enforce that altering the owner
+   doesn't do anything you couldn't do by dropping and recreating the XML schema.
+   However, a superuser can alter ownership of any XML schema anyway.)
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">name</replaceable></term>
+    <listitem>
+     <para>
+      The name (optionally schema-qualified) of an XML schema to be altered.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>IF EXISTS</literal></term>
+    <listitem>
+     <para>
+      Do not throw an error if the XML schema does not exist. A notice is issued
+      in this case.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">new_owner</replaceable></term>
+    <listitem>
+     <para>
+      The user name of the new owner of the XML schema.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">new_name</replaceable></term>
+    <listitem>
+     <para>
+      The new name of the XML schema.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">new_schema</replaceable></term>
+    <listitem>
+     <para>
+      The new schema for the XML schema.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To rename an XML schema:
+<programlisting>
+ALTER XMLSCHEMA person_schema RENAME TO people_schema;
+</programlisting>
+  </para>
+
+  <para>
+   To change the owner of an XML schema:
+<programlisting>
+ALTER XMLSCHEMA people_schema OWNER TO joe;
+</programlisting>
+  </para>
+
+  <para>
+   To move an XML schema to another schema:
+<programlisting>
+ALTER XMLSCHEMA people_schema SET SCHEMA myschema;
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Compatibility</title>
+
+  <para>
+   <command>ALTER XMLSCHEMA</command> is a
+   <productname>PostgreSQL</productname> extension.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="sql-createxmlschema"/></member>
+   <member><xref linkend="sql-dropxmlschema"/></member>
+  </simplelist>
+ </refsect1>
+
+</refentry>

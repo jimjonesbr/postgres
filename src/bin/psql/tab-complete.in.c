@@ -797,6 +797,13 @@ static const SchemaQuery Query_for_list_of_matviews = {
 	.result = "c.relname",
 };
 
+static const SchemaQuery Query_for_list_of_xmlschemas = {
+	.catname = "pg_catalog.pg_xmlschema s",
+	.viscondition = "pg_catalog.has_schema_privilege(s.oid, 'USAGE')",
+	.namespace = "s.schemanamespace",
+	.result = "s.schemaname",
+};
+
 static const SchemaQuery Query_for_list_of_indexes = {
 	.catname = "pg_catalog.pg_class c",
 	.selcondition =
@@ -1364,6 +1371,7 @@ static const pgsql_thing_t words_after_create[] = {
 	{"USER", Query_for_list_of_roles, NULL, NULL, Keywords_for_user_thing},
 	{"USER MAPPING FOR", NULL, NULL, NULL},
 	{"VIEW", NULL, NULL, &Query_for_list_of_views},
+	{"XMLSCHEMA", NULL, NULL, &Query_for_list_of_xmlschemas},
 	{NULL}						/* end of list */
 };
 
@@ -2700,6 +2708,10 @@ match_previous_words(int pattern_id,
 	/* ALTER MATERIALIZED VIEW xxx SET ACCESS METHOD */
 	else if (Matches("ALTER", "MATERIALIZED", "VIEW", MatchAny, "SET", "ACCESS", "METHOD"))
 		COMPLETE_WITH_QUERY(Query_for_list_of_table_access_methods);
+
+	/* ALTER XMLSCHEMA <name> */
+	else if (Matches("ALTER", "XMLSCHEMA", MatchAny))
+		COMPLETE_WITH("OWNER TO", "RENAME TO", "SET SCHEMA");
 
 	/* ALTER POLICY <name> */
 	else if (Matches("ALTER", "POLICY"))
@@ -4177,6 +4189,16 @@ match_previous_words(int pattern_id,
 	else if (Matches("CREATE", "MATERIALIZED", "VIEW", MatchAny, "AS") ||
 			 Matches("CREATE", "MATERIALIZED", "VIEW", MatchAny, "USING", MatchAny, "AS"))
 		COMPLETE_WITH("SELECT");
+
+/* CREATE XMLSCHEMA */
+	else if (Matches("CREATE", "XMLSCHEMA", MatchAny))
+		COMPLETE_WITH("AS", "IF");
+	else if (Matches("CREATE", "XMLSCHEMA", "IF"))
+		COMPLETE_WITH("NOT");
+	else if (Matches("CREATE", "XMLSCHEMA", "IF", "NOT"))
+		COMPLETE_WITH("EXISTS");
+	else if (Matches("CREATE", "XMLSCHEMA", "IF", "NOT", "EXISTS", MatchAny))
+		COMPLETE_WITH("AS");
 
 /* CREATE EVENT TRIGGER */
 	else if (Matches("CREATE", "EVENT"))

@@ -66,6 +66,7 @@
 #include "catalog/pg_ts_template.h"
 #include "catalog/pg_type.h"
 #include "catalog/pg_user_mapping.h"
+#include "catalog/pg_xmlschema.h"
 #include "commands/comment.h"
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
@@ -79,6 +80,7 @@
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
+#include "nodes/primnodes.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteRemove.h"
 #include "storage/lmgr.h"
@@ -1514,6 +1516,7 @@ doDeletion(const ObjectAddress *object, int flags)
 		case EventTriggerRelationId:
 		case TransformRelationId:
 		case AuthMemRelationId:
+		case XmlSchemaRelationId:
 			DropObjectById(object);
 			break;
 

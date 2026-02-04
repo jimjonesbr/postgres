@@ -679,3 +679,66 @@ SELECT xmltext('  ');
 SELECT xmltext('foo `$_-+?=*^%!|/\()[]{}');
 SELECT xmltext('foo & <"bar">');
 SELECT xmltext('x'|| '<P>73</P>'::xml || .42 || true || 'j'::char);
+
+CREATE XMLSCHEMA person_schema AS '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="person">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="name" type="xs:string"/>
+        <xs:element name="age" type="xs:integer"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>';
+
+
+CREATE XMLSCHEMA IF NOT EXISTS person_schema AS '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="other" type="xs:string"/>
+</xs:schema>';
+
+CREATE XMLSCHEMA person_schema AS '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="duplicate" type="xs:string"/>
+</xs:schema>';
+
+CREATE SCHEMA test_xmlschema_ns;
+
+CREATE XMLSCHEMA test_xmlschema_ns.product_schema AS '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="product">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="name" type="xs:string"/>
+        <xs:element name="price" type="xs:decimal"/>
+      </xs:sequence>
+      <xs:attribute name="id" type="xs:string" use="required"/>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>';
+
+CREATE XMLSCHEMA bad_schema AS '<this-is-not-valid-xsd>';
+
+CREATE XMLSCHEMA bad_xml_schema AS 'not even xml';
+
+CREATE XMLSCHEMA book_schema AS '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="book">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="title" type="xs:string"/>
+        <xs:element name="author" maxOccurs="unbounded">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="firstname" type="xs:string"/>
+              <xs:element name="lastname" type="xs:string"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="year" type="xs:integer"/>
+      </xs:sequence>
+      <xs:attribute name="isbn" type="xs:string" use="required"/>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>';

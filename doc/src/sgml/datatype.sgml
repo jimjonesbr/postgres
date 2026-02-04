@@ -4649,6 +4649,7 @@ SET xmloption TO { DOCUMENT | CONTENT };
     distribution.
    </para>
    </sect2>
+
   </sect1>
 
   &json;

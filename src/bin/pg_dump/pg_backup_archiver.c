@@ -3815,6 +3815,7 @@ _getObjectDescription(PQExpBuffer buf, const TocEntry *te)
 		strcmp(type, "TEXT SEARCH CONFIGURATION") == 0 ||
 		strcmp(type, "TYPE") == 0 ||
 		strcmp(type, "VIEW") == 0 ||
+		strcmp(type, "XMLSCHEMA") == 0 ||
 	/* non-schema-specified objects */
 		strcmp(type, "DATABASE") == 0 ||
 		strcmp(type, "PROCEDURAL LANGUAGE") == 0 ||

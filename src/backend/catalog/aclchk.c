@@ -64,6 +64,7 @@
 #include "catalog/pg_proc.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_xmlschema.h"
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
 #include "commands/extension.h"
@@ -289,6 +290,9 @@ restrict_and_check_grant(bool is_grant, AclMode avail_goptions, bool all_privs,
 			break;
 		case OBJECT_PARAMETER_ACL:
 			whole_mask = ACL_ALL_RIGHTS_PARAMETER_ACL;
+			break;
+		case OBJECT_XMLSCHEMA:
+			whole_mask = ACL_ALL_RIGHTS_XMLSCHEMA;
 			break;
 		default:
 			elog(ERROR, "unrecognized object type: %d", objtype);
@@ -534,6 +538,10 @@ ExecuteGrantStmt(GrantStmt *stmt)
 			all_privileges = ACL_ALL_RIGHTS_PARAMETER_ACL;
 			errormsg = gettext_noop("invalid privilege type %s for parameter");
 			break;
+		case OBJECT_XMLSCHEMA:
+			all_privileges = ACL_ALL_RIGHTS_XMLSCHEMA;
+			errormsg = gettext_noop("invalid privilege type %s for XML schema");
+			break;
 		default:
 			elog(ERROR, "unrecognized GrantStmt.objtype: %d",
 				 (int) stmt->objtype);
@@ -638,6 +646,9 @@ ExecGrantStmt_oids(InternalGrant *istmt)
 			break;
 		case OBJECT_PARAMETER_ACL:
 			ExecGrant_Parameter(istmt);
+			break;
+		case OBJECT_XMLSCHEMA:
+			ExecGrant_common(istmt, XmlSchemaRelationId, ACL_ALL_RIGHTS_XMLSCHEMA, NULL);
 			break;
 		default:
 			elog(ERROR, "unrecognized GrantStmt.objtype: %d",
@@ -2677,6 +2688,9 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 					case OBJECT_CONVERSION:
 						msg = gettext_noop("permission denied for conversion %s");
 						break;
+					case OBJECT_XMLSCHEMA:
+						msg = gettext_noop("permission denied for XML schema %s");
+						break;
 					case OBJECT_DATABASE:
 						msg = gettext_noop("permission denied for database %s");
 						break;
@@ -2808,6 +2822,9 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 						break;
 					case OBJECT_CONVERSION:
 						msg = gettext_noop("must be owner of conversion %s");
+						break;
+					case OBJECT_XMLSCHEMA:
+						msg = gettext_noop("must be owner of XML schema %s");
 						break;
 					case OBJECT_DATABASE:
 						msg = gettext_noop("must be owner of database %s");

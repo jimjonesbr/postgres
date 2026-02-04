@@ -50,6 +50,7 @@ typedef enum
 	DO_OPFAMILY,
 	DO_COLLATION,
 	DO_CONVERSION,
+	DO_XMLSCHEMA,
 	DO_TABLE,
 	DO_TABLE_ATTACH,
 	DO_ATTRDEF,
@@ -298,6 +299,12 @@ typedef struct _convInfo
 	DumpableObject dobj;
 	const char *rolname;
 } ConvInfo;
+
+typedef struct _xmlSchemaInfo
+{
+	DumpableObject dobj;
+	const char *rolname;
+}			XmlSchemaInfo;
 
 typedef struct _tableInfo
 {
@@ -797,6 +804,7 @@ extern void getOpclasses(Archive *fout);
 extern void getOpfamilies(Archive *fout);
 extern void getCollations(Archive *fout);
 extern void getConversions(Archive *fout);
+extern void getXmlSchemas(Archive *fout);
 extern TableInfo *getTables(Archive *fout, int *numTables);
 extern void getOwnedSeqs(Archive *fout, TableInfo tblinfo[], int numTables);
 extern InhInfo *getInherits(Archive *fout, int *numInherits);

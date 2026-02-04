@@ -278,6 +278,13 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 				name = NameListToString(castNode(List, object));
 			}
 			break;
+		case OBJECT_XMLSCHEMA:
+			if (!schema_does_not_exist_skipping(castNode(List, object), &msg, &name))
+			{
+				msg = gettext_noop("XML schema \"%s\" does not exist, skipping");
+				name = NameListToString(castNode(List, object));
+			}
+			break;
 		case OBJECT_SCHEMA:
 			msg = gettext_noop("schema \"%s\" does not exist, skipping");
 			name = strVal(object);

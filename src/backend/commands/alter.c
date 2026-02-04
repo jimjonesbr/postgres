@@ -41,6 +41,7 @@
 #include "catalog/pg_ts_dict.h"
 #include "catalog/pg_ts_parser.h"
 #include "catalog/pg_ts_template.h"
+#include "catalog/pg_xmlschema.h"
 #include "commands/alter.h"
 #include "commands/collationcmds.h"
 #include "commands/dbcommands.h"
@@ -133,6 +134,10 @@ report_namespace_conflict(Oid classId, const char *name, Oid nspOid)
 			break;
 		case TSConfigRelationId:
 			msgfmt = gettext_noop("text search configuration \"%s\" already exists in schema \"%s\"");
+			break;
+		case XmlSchemaRelationId:
+			Assert(OidIsValid(nspOid));
+			msgfmt = gettext_noop("XML schema \"%s\" already exists in schema \"%s\"");
 			break;
 		default:
 			elog(ERROR, "unsupported object class: %u", classId);
@@ -417,6 +422,7 @@ ExecRenameStmt(RenameStmt *stmt)
 		case OBJECT_FDW:
 		case OBJECT_FOREIGN_SERVER:
 		case OBJECT_FUNCTION:
+		case OBJECT_XMLSCHEMA:
 		case OBJECT_OPCLASS:
 		case OBJECT_OPFAMILY:
 		case OBJECT_LANGUAGE:
@@ -561,6 +567,7 @@ ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt,
 		case OBJECT_FUNCTION:
 		case OBJECT_OPERATOR:
 		case OBJECT_OPCLASS:
+		case OBJECT_XMLSCHEMA:
 		case OBJECT_OPFAMILY:
 		case OBJECT_PROCEDURE:
 		case OBJECT_ROUTINE:
@@ -871,6 +878,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 		case OBJECT_CONVERSION:
 		case OBJECT_FUNCTION:
 		case OBJECT_LANGUAGE:
+		case OBJECT_XMLSCHEMA:
 		case OBJECT_LARGEOBJECT:
 		case OBJECT_OPERATOR:
 		case OBJECT_OPCLASS:

@@ -59,6 +59,7 @@ catalog_headers = [
   'pg_seclabel.h',
   'pg_shseclabel.h',
   'pg_collation.h',
+  'pg_xmlschema.h',
   'pg_parameter_acl.h',
   'pg_partitioned_table.h',
   'pg_range.h',

@@ -191,6 +191,7 @@ extern bool SearchPathMatchesCurrentEnvironment(SearchPathMatcher *path);
 
 extern Oid	get_collation_oid(List *collname, bool missing_ok);
 extern Oid	get_conversion_oid(List *conname, bool missing_ok);
+extern Oid	get_xmlschema_oid(List *schemaname, bool missing_ok);
 extern Oid	FindDefaultConversionProc(int32 for_encoding, int32 to_encoding);
 
 

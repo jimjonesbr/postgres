@@ -30,6 +30,7 @@
 #include "catalog/pg_collation.h"
 #include "catalog/pg_conversion.h"
 #include "catalog/pg_database.h"
+#include "catalog/pg_xmlschema.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_operator.h"
@@ -4141,6 +4142,61 @@ get_conversion_oid(List *conname, bool missing_ok)
 				 errmsg("conversion \"%s\" does not exist",
 						NameListToString(conname))));
 	return conoid;
+}
+
+/*
+ * get_xmlschema_oid - find an XML schema by possibly qualified name
+ */
+Oid
+get_xmlschema_oid(List *schemaname, bool missing_ok)
+{
+	char	   *nspname;
+	char	   *schema_name;
+	Oid			namespaceId;
+	Oid			schema_oid = InvalidOid;
+	ListCell   *l;
+
+	/* deconstruct the name list */
+	DeconstructQualifiedName(schemaname, &nspname, &schema_name);
+
+	if (nspname)
+	{
+		/* use exact schema given */
+		namespaceId = LookupExplicitNamespace(nspname, missing_ok);
+		if (missing_ok && !OidIsValid(namespaceId))
+			schema_oid = InvalidOid;
+		else
+			schema_oid = GetSysCacheOid2(XMLSCHEMANAMENSP, Anum_pg_xmlschema_oid,
+										 PointerGetDatum(schema_name),
+										 ObjectIdGetDatum(namespaceId));
+	}
+	else
+	{
+		/* search for it in search path */
+		recomputeNamespacePath();
+
+		foreach(l, activeSearchPath)
+		{
+			namespaceId = lfirst_oid(l);
+
+			if (namespaceId == myTempNamespace)
+				continue;		/* do not look in temp namespace */
+
+			schema_oid = GetSysCacheOid2(XMLSCHEMANAMENSP, Anum_pg_xmlschema_oid,
+										 PointerGetDatum(schema_name),
+										 ObjectIdGetDatum(namespaceId));
+			if (OidIsValid(schema_oid))
+				return schema_oid;
+		}
+	}
+
+	/* Not found in path */
+	if (!OidIsValid(schema_oid) && !missing_ok)
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("XML schema \"%s\" does not exist",
+						NameListToString(schemaname))));
+	return schema_oid;
 }
 
 /*

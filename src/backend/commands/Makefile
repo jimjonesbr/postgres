@@ -66,6 +66,7 @@ OBJS = \
 	vacuumparallel.o \
 	variable.o \
 	view.o \
-	wait.o
+	wait.o \
+	xmlschemacmds.o
 
 include $(top_srcdir)/src/backend/common.mk

@@ -1,0 +1,182 @@
+<!--
+doc/src/sgml/ref/create_xmlschema.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="sql-createxmlschema">
+ <indexterm zone="sql-createxmlschema">
+  <primary>CREATE XMLSCHEMA</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>CREATE XMLSCHEMA</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>CREATE XMLSCHEMA</refname>
+  <refpurpose>define a new XML schema</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+CREATE XMLSCHEMA [ IF NOT EXISTS ] <replaceable class="parameter">name</replaceable> AS <replaceable class="parameter">schema_definition</replaceable>
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   <command>CREATE XMLSCHEMA</command> defines a new XML schema in the
+   current database. The schema definition is an XML Schema Definition (XSD)
+   document that can be used to validate XML documents using the
+   <function>XMLVALIDATE</function> function.
+  </para>
+
+  <para>
+   If a schema name is given then the XML schema is created in the
+   specified schema. Otherwise it is created in the current schema.
+   The XML schema name must be unique within the schema.
+  </para>
+
+  <para>
+   After an XML schema is created, you use the
+   <function>XMLVALIDATE</function> function to validate XML documents
+   against it.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><literal>IF NOT EXISTS</literal></term>
+    <listitem>
+     <para>
+      Do not throw an error if an XML schema with the same name already exists.
+      A notice is issued in this case. Note that there is no guarantee that
+      the existing XML schema is similar to the one that would have been created.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">name</replaceable></term>
+    <listitem>
+     <para>
+      The name (optionally schema-qualified) of the XML schema to be created.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">schema_definition</replaceable></term>
+    <listitem>
+     <para>
+      An XML Schema Definition (XSD) document provided as a string literal.
+      The schema definition must be a valid XSD document conforming to the
+      W3C XML Schema standard.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Notes</title>
+
+  <para>
+   To create an XML schema, you must have <literal>CREATE</literal> privilege
+   on the current schema.
+  </para>
+
+  <para>
+   Use <link linkend="sql-dropxmlschema"><command>DROP XMLSCHEMA</command></link> to remove an XML schema.
+  </para>
+
+  <para>
+   See also <link linkend="sql-alterxmlschema"><command>ALTER XMLSCHEMA</command></link>
+   to rename an XML schema or change its owner.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   Create an XML schema for validating person documents:
+<programlisting>
+CREATE XMLSCHEMA person_schema AS '&lt;?xml version="1.0"?&gt;
+&lt;xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"&gt;
+  &lt;xs:element name="person"&gt;
+    &lt;xs:complexType&gt;
+      &lt;xs:sequence&gt;
+        &lt;xs:element name="name" type="xs:string"/&gt;
+        &lt;xs:element name="age" type="xs:integer"/&gt;
+      &lt;/xs:sequence&gt;
+    &lt;/xs:complexType&gt;
+  &lt;/xs:element&gt;
+&lt;/xs:schema&gt;';
+</programlisting>
+  </para>
+
+  <para>
+   Create an XML schema with a schema-qualified name:
+<programlisting>
+CREATE SCHEMA myschema;
+CREATE XMLSCHEMA myschema.product_schema AS '&lt;?xml version="1.0"?&gt;
+&lt;xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"&gt;
+  &lt;xs:element name="product"&gt;
+    &lt;xs:complexType&gt;
+      &lt;xs:sequence&gt;
+        &lt;xs:element name="name" type="xs:string"/&gt;
+        &lt;xs:element name="price" type="xs:decimal"/&gt;
+      &lt;/xs:sequence&gt;
+      &lt;xs:attribute name="id" type="xs:string" use="required"/&gt;
+    &lt;/xs:complexType&gt;
+  &lt;/xs:element&gt;
+&lt;/xs:schema&gt;';
+</programlisting>
+  </para>
+
+  <para>
+   Create an XML schema only if it doesn't already exist:
+<programlisting>
+CREATE XMLSCHEMA IF NOT EXISTS person_schema AS '...';
+</programlisting>
+  </para>
+
+  <para>
+   Validate an XML document against the schema:
+<programlisting>
+SELECT XMLVALIDATE(
+  DOCUMENT '&lt;person&gt;&lt;name&gt;John&lt;/name&gt;&lt;age&gt;30&lt;/age&gt;&lt;/person&gt;'
+  ACCORDING TO XMLSCHEMA person_schema
+);
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Compatibility</title>
+
+  <para>
+   <command>CREATE XMLSCHEMA</command> is a
+   <productname>PostgreSQL</productname> extension. There is no
+   <command>CREATE XMLSCHEMA</command> statement in the SQL standard.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="sql-alterxmlschema"/></member>
+   <member><xref linkend="sql-dropxmlschema"/></member>
+  </simplelist>
+ </refsect1>
+
+</refentry>

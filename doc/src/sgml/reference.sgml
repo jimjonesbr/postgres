@@ -76,6 +76,7 @@
    &alterUser;
    &alterUserMapping;
    &alterView;
+   &alterXmlSchema;
    &analyze;
    &begin;
    &call;
@@ -128,6 +129,7 @@
    &createUser;
    &createUserMapping;
    &createView;
+   &createXmlSchema;
    &deallocate;
    &declare;
    &delete;
@@ -176,6 +178,7 @@
    &dropUser;
    &dropUserMapping;
    &dropView;
+   &dropXmlSchema;
    &end;
    &execute;
    &explain;

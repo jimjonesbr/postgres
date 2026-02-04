@@ -46,6 +46,7 @@ OBJS = \
 	pg_subscription.o \
 	pg_tablespace.o \
 	pg_type.o \
+	pg_xmlschema.o \
 	storage.o \
 	toasting.o
 

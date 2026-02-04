@@ -1575,6 +1575,11 @@ describeDumpableObject(DumpableObject *obj, char *buf, int bufsize)
 					 "CONVERSION %s  (ID %d OID %u)",
 					 obj->name, obj->dumpId, obj->catId.oid);
 			return;
+		case DO_XMLSCHEMA:
+			snprintf(buf, bufsize,
+					 "XMLSCHEMA %s  (ID %d OID %u)",
+					 obj->name, obj->dumpId, obj->catId.oid);
+			return;
 		case DO_TABLE:
 			snprintf(buf, bufsize,
 					 "TABLE %s  (ID %d OID %u)",
