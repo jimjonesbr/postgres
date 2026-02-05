@@ -742,3 +742,212 @@ CREATE XMLSCHEMA book_schema AS '<?xml version="1.0"?>
     </xs:complexType>
   </xs:element>
 </xs:schema>';
+
+SELECT XMLVALIDATE(DOCUMENT '<person><name>John</name><age>30</age></person>'
+  ACCORDING TO XMLSCHEMA person_schema);
+
+SELECT XMLVALIDATE(DOCUMENT '<product id="P123"><name>Widget</name><price>9.99</price></product>'
+  ACCORDING TO XMLSCHEMA test_xmlschema_ns.product_schema);
+
+SELECT XMLVALIDATE(DOCUMENT
+  '<book isbn="978-0-123456-78-9">
+    <title>PostgreSQL Internals</title>
+    <author><firstname>John</firstname><lastname>Titor</lastname></author>
+    <author><firstname>Jane</firstname></author>
+    <year>2024</year>
+  </book>'
+  ACCORDING TO XMLSCHEMA book_schema);
+
+SELECT XMLSERIALIZE(DOCUMENT
+  XMLVALIDATE(DOCUMENT '<person><name>Alice</name><age>25</age></person>'
+    ACCORDING TO XMLSCHEMA person_schema) AS text);
+
+SELECT XMLVALIDATE(DOCUMENT NULL ACCORDING TO XMLSCHEMA person_schema);
+
+SELECT XMLVALIDATE(DOCUMENT NULL ACCORDING TO XMLSCHEMA person_schema) IS NULL AS is_null;
+
+SELECT XMLVALIDATE(DOCUMENT '<person><name>John</name></person>'
+  ACCORDING TO XMLSCHEMA person_schema);
+
+SELECT XMLVALIDATE(DOCUMENT '<person><name>John</name><age>not-a-number</age></person>'
+  ACCORDING TO XMLSCHEMA person_schema);
+
+SELECT XMLVALIDATE(DOCUMENT '<product><name>Widget</name><price>9.99</price></product>'
+  ACCORDING TO XMLSCHEMA test_xmlschema_ns.product_schema);
+
+SELECT XMLVALIDATE(DOCUMENT '<person><name>John</name><age>30</age><extra>data</extra></person>'
+  ACCORDING TO XMLSCHEMA person_schema);
+
+SELECT XMLVALIDATE(DOCUMENT '<notperson><name>John</name><age>30</age></notperson>'
+  ACCORDING TO XMLSCHEMA person_schema);
+
+SELECT XMLVALIDATE(DOCUMENT '<test>value</test>'
+  ACCORDING TO XMLSCHEMA nonexistent_schema);
+
+CREATE VIEW validated_people AS
+  SELECT XMLVALIDATE(DOCUMENT data ACCORDING TO XMLSCHEMA person_schema) AS validated_xml
+  FROM xmltest WHERE id = 1;
+
+SELECT pg_get_viewdef('validated_people'::regclass, true);
+
+DROP VIEW validated_people;
+
+CREATE VIEW validated_products AS
+  SELECT XMLVALIDATE(DOCUMENT '<product id="123"><name>Test</name><price>1.99</price></product>'
+    ACCORDING TO XMLSCHEMA test_xmlschema_ns.product_schema) AS validated_xml;
+
+SELECT pg_get_viewdef('validated_products'::regclass, true);
+
+DROP VIEW validated_products;
+
+ALTER XMLSCHEMA book_schema RENAME TO library_book_schema;
+
+SELECT XMLVALIDATE(DOCUMENT '<book isbn="123"><title>Test</title><author><firstname>A</firstname><lastname>B</lastname></author><year>2024</year></book>'
+ ACCORDING TO XMLSCHEMA book_schema);
+
+SELECT XMLVALIDATE(DOCUMENT '<book isbn="123"><title>Test</title><author><firstname>A</firstname><lastname>B</lastname></author><year>2024</year></book>'
+  ACCORDING TO XMLSCHEMA library_book_schema);
+
+ALTER XMLSCHEMA library_book_schema SET SCHEMA test_xmlschema_ns;
+
+SELECT XMLVALIDATE(DOCUMENT '<book isbn="123"><title>Test</title><author><firstname>A</firstname><lastname>B</lastname></author><year>2024</year></book>'
+  ACCORDING TO XMLSCHEMA library_book_schema);
+
+SELECT XMLVALIDATE(DOCUMENT '<book isbn="123"><title>Test</title><author><firstname>A</firstname><lastname>B</lastname></author><year>2024</year></book>'
+  ACCORDING TO XMLSCHEMA test_xmlschema_ns.library_book_schema);
+
+CREATE ROLE regress_xmlschema_test_role;
+
+ALTER XMLSCHEMA test_xmlschema_ns.library_book_schema OWNER TO regress_xmlschema_test_role;
+
+SELECT schemaname, schemanamespace::regnamespace, schemaowner::regrole
+FROM pg_xmlschema
+WHERE schemaname = 'library_book_schema';
+
+CREATE VIEW book_view AS
+  SELECT XMLVALIDATE(DOCUMENT '<book isbn="456"><title>Dep Test</title><author><firstname>X</firstname><lastname>Y</lastname></author><year>2025</year></book>'
+    ACCORDING TO XMLSCHEMA test_xmlschema_ns.library_book_schema) AS validated_book;
+
+DROP XMLSCHEMA test_xmlschema_ns.library_book_schema;
+
+DROP XMLSCHEMA test_xmlschema_ns.library_book_schema CASCADE;
+
+SELECT * FROM book_view;
+
+DROP XMLSCHEMA person_schema;
+
+DROP XMLSCHEMA IF EXISTS person_schema;
+
+DROP XMLSCHEMA person_schema;
+
+DROP XMLSCHEMA test_xmlschema_ns.product_schema;
+
+SET ROLE regress_xmlschema_test_role;
+
+CREATE XMLSCHEMA public.should_fail_schema AS '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="test" type="xs:string"/>
+</xs:schema>';
+
+RESET ROLE;
+
+GRANT CREATE ON SCHEMA test_xmlschema_ns TO regress_xmlschema_test_role;
+
+SET ROLE regress_xmlschema_test_role;
+
+CREATE XMLSCHEMA test_xmlschema_ns.role_schema AS '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="test" type="xs:string"/>
+</xs:schema>';
+
+RESET ROLE;
+
+DROP XMLSCHEMA test_xmlschema_ns.role_schema;
+
+DROP ROLE regress_xmlschema_test_role;
+
+DROP SCHEMA test_xmlschema_ns CASCADE;
+
+CREATE ROLE regress_xmlschema_user1;
+CREATE ROLE regress_xmlschema_user2;
+
+CREATE XMLSCHEMA permission_test_schema AS '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="test" type="xs:string"/>
+</xs:schema>';
+
+SET ROLE regress_xmlschema_user1;
+SELECT XMLVALIDATE(DOCUMENT '<test>data</test>'
+                   ACCORDING TO XMLSCHEMA permission_test_schema);
+
+RESET ROLE;
+
+GRANT USAGE ON XMLSCHEMA permission_test_schema TO regress_xmlschema_user1;
+
+SET ROLE regress_xmlschema_user1;
+SELECT XMLVALIDATE(DOCUMENT '<test>data</test>'
+                   ACCORDING TO XMLSCHEMA permission_test_schema);
+
+RESET ROLE;
+
+SET ROLE regress_xmlschema_user2;
+SELECT XMLVALIDATE(DOCUMENT '<test>data</test>'
+                   ACCORDING TO XMLSCHEMA permission_test_schema);
+
+RESET ROLE;
+
+GRANT USAGE ON XMLSCHEMA permission_test_schema TO regress_xmlschema_user2;
+
+SET ROLE regress_xmlschema_user2;
+SELECT XMLVALIDATE(DOCUMENT '<test>data</test>'
+                   ACCORDING TO XMLSCHEMA permission_test_schema);
+
+RESET ROLE;
+
+REVOKE USAGE ON XMLSCHEMA permission_test_schema FROM regress_xmlschema_user1;
+
+SET ROLE regress_xmlschema_user1;
+SELECT XMLVALIDATE(DOCUMENT '<test>data</test>'
+                   ACCORDING TO XMLSCHEMA permission_test_schema);
+
+RESET ROLE;
+
+DROP XMLSCHEMA permission_test_schema;
+DROP ROLE regress_xmlschema_user1;
+DROP ROLE regress_xmlschema_user2;
+
+CREATE TABLE validated_xml_data (
+  id serial PRIMARY KEY,
+  data xml
+);
+
+CREATE XMLSCHEMA data_schema AS '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="data">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="value" type="xs:integer"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>';
+
+INSERT INTO validated_xml_data (data)
+VALUES (XMLVALIDATE(DOCUMENT '<data><value>42</value></data>'
+  ACCORDING TO XMLSCHEMA data_schema));
+
+INSERT INTO validated_xml_data (data)
+VALUES (XMLVALIDATE(DOCUMENT '<data><value>100</value></data>'
+  ACCORDING TO XMLSCHEMA data_schema));
+
+SELECT id, data FROM validated_xml_data ORDER BY id;
+
+INSERT INTO validated_xml_data (data)
+VALUES (XMLVALIDATE(DOCUMENT '<data><value>not-an-int</value></data>'
+  ACCORDING TO XMLSCHEMA data_schema));
+
+DROP TABLE validated_xml_data;
+DROP XMLSCHEMA data_schema;
+DROP XMLSCHEMA should_fail_schema;
+
+DROP ROLE regress_xmlschema_test_role;

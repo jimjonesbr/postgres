@@ -58,6 +58,7 @@
 #include <libxml/xmlwriter.h>
 #include <libxml/xpath.h>
 #include <libxml/xpathInternals.h>
+#include <libxml/xmlschemas.h>
 
 /*
  * We used to check for xmlStructuredErrorContext via a configure test; but
@@ -84,6 +85,7 @@
 #include "catalog/namespace.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_xmlschema.h"
 #include "executor/spi.h"
 #include "executor/tablefunc.h"
 #include "fmgr.h"
@@ -94,6 +96,7 @@
 #include "nodes/execnodes.h"
 #include "nodes/miscnodes.h"
 #include "nodes/nodeFuncs.h"
+#include "utils/acl.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/date.h"
@@ -1158,10 +1161,147 @@ xmlvalidate(PG_FUNCTION_ARGS)
 {
 	ereport(ERROR,
 			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			 errmsg("xmlvalidate is not implemented")));
+			 errmsg("xmlvalidate is not implemented against generalized schema definitions")));
 	return 0;
 }
 
+/*
+ * xmlvalidate_schema - validate XML document against a registered XML Schema
+ *
+ * Validates the given XML document against the schema identified by a schema_oid.
+ * Returns the validated XML value, or raises an error if the validation fails.
+ */
+xmltype *
+xmlvalidate_schema(xmltype *data, Oid schema_oid)
+{
+#ifdef USE_LIBXML
+	HeapTuple	tuple;
+	Datum		schema_datum;
+	bool		isnull;
+	xmltype    *schema_xml;
+	char	   *schemastr;
+	volatile xmlDocPtr doc = NULL;
+	volatile	xmlSchemaParserCtxtPtr schema_parser_ctxt = NULL;
+	volatile	xmlSchemaPtr schema_ptr = NULL;
+	volatile	xmlSchemaValidCtxtPtr valid_ctxt = NULL;
+	int			result;
+	PgXmlErrorContext *xmlerrcxt;
+	AclResult	aclresult;
+
+	/* Check usage permission first */
+	aclresult = object_aclcheck(XmlSchemaRelationId, schema_oid,
+								GetUserId(), ACL_USAGE);
+	if (aclresult != ACLCHECK_OK)
+	{
+		/* Fetch tuple only to get name for the error message */
+		Form_pg_xmlschema schema_form;
+
+		tuple = SearchSysCache1(XMLSCHEMAOID, ObjectIdGetDatum(schema_oid));
+		if (!HeapTupleIsValid(tuple))
+			elog(ERROR, "cache lookup failed for XML schema %u", schema_oid);
+
+		schema_form = (Form_pg_xmlschema) GETSTRUCT(tuple);
+		ReleaseSysCache(tuple);
+
+		aclcheck_error(aclresult, OBJECT_XMLSCHEMA,
+					   NameStr(schema_form->schemaname));
+	}
+
+	tuple = SearchSysCache1(XMLSCHEMAOID, ObjectIdGetDatum(schema_oid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for XML schema %u", schema_oid);
+
+	schema_datum = SysCacheGetAttr(XMLSCHEMAOID, tuple,
+								   Anum_pg_xmlschema_schemadata, &isnull);
+	if (isnull)
+		elog(ERROR, "null schemadata for XML schema %u", schema_oid);
+
+	schema_xml = DatumGetXmlP(schema_datum);
+	schemastr = text_to_cstring(schema_xml);
+	ReleaseSysCache(tuple);
+
+	xmlerrcxt = pg_xml_init(PG_XML_STRICTNESS_WELLFORMED);
+
+	PG_TRY();
+	{
+		ErrorSaveContext escontext = {T_ErrorSaveContext};
+
+		doc = xml_parse((text *) data, XMLOPTION_DOCUMENT, true,
+						GetDatabaseEncoding(), NULL, NULL, (Node *) &escontext);
+
+		if (escontext.error_occurred || doc == NULL)
+		{
+			if (escontext.error_occurred && escontext.error_data)
+			{
+				ErrorData  *edata = escontext.error_data;
+
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_XML_DOCUMENT),
+						 errmsg("invalid XML document"),
+						 errdetail_internal("%s", edata->message ? edata->message : "unknown error")));
+			}
+			xml_ereport(xmlerrcxt, ERROR, ERRCODE_INVALID_XML_DOCUMENT,
+						"invalid XML document");
+		}
+
+		schema_parser_ctxt = xmlSchemaNewMemParserCtxt(schemastr, strlen(schemastr));
+		if (schema_parser_ctxt == NULL)
+			xml_ereport(xmlerrcxt, ERROR, ERRCODE_INTERNAL_ERROR,
+						"failed to create schema parser context");
+
+		schema_ptr = xmlSchemaParse(schema_parser_ctxt);
+		if (schema_ptr == NULL)
+			xml_ereport(xmlerrcxt, ERROR, ERRCODE_INVALID_XML_DOCUMENT,
+						"failed to parse XML schema");
+
+		valid_ctxt = xmlSchemaNewValidCtxt(schema_ptr);
+		if (valid_ctxt == NULL)
+			xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
+						"failed to create schema validation context");
+
+		xmlSchemaSetValidStructuredErrors(valid_ctxt, xml_errorHandler, xmlerrcxt);
+
+		result = xmlSchemaValidateDoc(valid_ctxt, doc);
+		if (result < 0)
+			xml_ereport(xmlerrcxt, ERROR, ERRCODE_INTERNAL_ERROR,
+						"internal error during schema validation");
+		if (result > 0)
+			xml_ereport(xmlerrcxt, ERROR, ERRCODE_INVALID_XML_DOCUMENT,
+						"XML validation failed");
+	}
+	PG_CATCH();
+	{
+		if (valid_ctxt)
+			xmlSchemaFreeValidCtxt(valid_ctxt);
+		if (schema_ptr)
+			xmlSchemaFree(schema_ptr);
+		if (schema_parser_ctxt)
+			xmlSchemaFreeParserCtxt(schema_parser_ctxt);
+		if (doc)
+			xmlFreeDoc(doc);
+		pg_xml_done(xmlerrcxt, true);
+		pfree(schemastr);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	if (valid_ctxt)
+		xmlSchemaFreeValidCtxt(valid_ctxt);
+	if (schema_ptr)
+		xmlSchemaFree(schema_ptr);
+	if (schema_parser_ctxt)
+		xmlSchemaFreeParserCtxt(schema_parser_ctxt);
+	if (doc)
+		xmlFreeDoc(doc);
+
+	pg_xml_done(xmlerrcxt, false);
+	pfree(schemastr);
+	return data;
+#else
+	NO_XML_SUPPORT();
+	return NULL;
+#endif
+}
 
 bool
 xml_is_document(xmltype *arg)
@@ -1181,7 +1321,7 @@ xml_is_document(xmltype *arg)
 	return !escontext.error_occurred;
 #else							/* not USE_LIBXML */
 	NO_XML_SUPPORT();
-	return false;
+	return NULL;
 #endif							/* not USE_LIBXML */
 }
 

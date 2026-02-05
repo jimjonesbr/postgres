@@ -2419,6 +2419,34 @@ find_expr_references_walker(Node *node,
 						   context->addrs);
 		/* fall through to examine arguments */
 	}
+	else if (IsA(node, XmlExpr))
+	{
+		XmlExpr    *xmlexpr = (XmlExpr *) node;
+
+		/*
+		 * XMLVALIDATE's second argument is a Const containing the schema OID.
+		 * Record a dependency on it.
+		 */
+		if (xmlexpr->op == IS_XMLVALIDATE && list_length(xmlexpr->args) == 2)
+		{
+			Node	   *schema_arg = (Node *) lsecond(xmlexpr->args);
+
+			if (IsA(schema_arg, Const))
+			{
+				Const	   *schema_const = (Const *) schema_arg;
+				Oid			schema_oid;
+
+				if (!schema_const->constisnull &&
+					schema_const->consttype == OIDOID)
+				{
+					schema_oid = DatumGetObjectId(schema_const->constvalue);
+					add_object_address(XmlSchemaRelationId, schema_oid, 0,
+									   context->addrs);
+				}
+			}
+		}
+		/* fall through to examine arguments */
+	}
 
 	return expression_tree_walker(node, find_expr_references_walker,
 								  context);

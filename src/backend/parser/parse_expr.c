@@ -16,6 +16,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
@@ -2370,6 +2371,7 @@ transformXmlExpr(ParseState *pstate, XmlExpr *x)
 	XmlExpr    *newx;
 	ListCell   *lc;
 	int			i;
+	Oid			xmlvalidate_schema_oid = InvalidOid;
 
 	newx = makeNode(XmlExpr);
 	newx->op = x->op;
@@ -2381,6 +2383,22 @@ transformXmlExpr(ParseState *pstate, XmlExpr *x)
 	newx->type = XMLOID;		/* this just marks the node as transformed */
 	newx->typmod = -1;
 	newx->location = x->location;
+
+	/*
+	 * XMLVALIDATE stores the schema name list in named_args, not ResTargets.
+	 * Extract it before processing named arguments.
+	 */
+	if (x->op == IS_XMLVALIDATE && x->named_args != NIL)
+	{
+		List	   *schema_name_list;
+
+		schema_name_list = x->named_args;
+		xmlvalidate_schema_oid = get_xmlschema_oid(schema_name_list, false);
+		/* Preserve schema name for deparsing */
+		newx->name = NameListToString(schema_name_list);
+		/* Clear to avoid processing as ResTargets */
+		x->named_args = NIL;
+	}
 
 	/*
 	 * gram.y built the named args as a list of ResTarget.  Transform each,
@@ -2481,6 +2499,11 @@ transformXmlExpr(ParseState *pstate, XmlExpr *x)
 				/* not handled here */
 				Assert(false);
 				break;
+			case IS_XMLVALIDATE:
+				/* First argument is the XML data */
+				newe = coerce_to_specific_type(pstate, newe, XMLOID,
+											   "XMLVALIDATE");
+				break;
 			case IS_DOCUMENT:
 				newe = coerce_to_specific_type(pstate, newe, XMLOID,
 											   "IS DOCUMENT");
@@ -2488,6 +2511,26 @@ transformXmlExpr(ParseState *pstate, XmlExpr *x)
 		}
 		newx->args = lappend(newx->args, newe);
 		i++;
+	}
+
+	/* For XMLVALIDATE, add the schema OID as second argument */
+	if (x->op == IS_XMLVALIDATE)
+	{
+		Const	   *schema_oid_const;
+
+		Assert(OidIsValid(xmlvalidate_schema_oid));
+
+		schema_oid_const = makeConst(OIDOID,
+									 -1,
+									 InvalidOid,
+									 sizeof(Oid),
+									 ObjectIdGetDatum(xmlvalidate_schema_oid),
+									 false,
+									 true);
+		newx->args = lappend(newx->args, schema_oid_const);
+
+		/* Return type is XML */
+		newx->type = XMLOID;
 	}
 
 	return (Node *) newx;

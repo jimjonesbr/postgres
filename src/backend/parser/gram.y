@@ -707,7 +707,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
  */
 
 /* ordinary key words in alphabetical order */
-%token <keyword> ABORT_P ABSENT ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER
+%token <keyword> ABORT_P ABSENT ABSOLUTE_P ACCESS ACCORDING ACTION ADD_P ADMIN AFTER
 	AGGREGATE ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY ARRAY AS ASC
 	ASENSITIVE ASSERTION ASSIGNMENT ASYMMETRIC ATOMIC AT ATTACH ATTRIBUTE AUTHORIZATION
 
@@ -798,7 +798,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	WAIT WHEN WHERE WHITESPACE_P WINDOW WITH WITHIN WITHOUT WORK WRAPPER WRITE
 
 	XML_P XMLATTRIBUTES XMLCONCAT XMLELEMENT XMLEXISTS XMLFOREST XMLNAMESPACES
-	XMLPARSE XMLPI XMLROOT XMLSCHEMA XMLSERIALIZE XMLTABLE
+	XMLPARSE XMLPI XMLROOT XMLSCHEMA XMLSERIALIZE XMLTABLE XMLVALIDATE
 
 	YEAR_P YES_P
 
@@ -16348,6 +16348,17 @@ func_expr_common_subexpr:
 					n->location = @1;
 					$$ = (Node *) n;
 				}
+			| XMLVALIDATE '(' DOCUMENT_P a_expr ACCORDING TO XMLSCHEMA any_name ')'
+				{
+					XmlExpr *x = (XmlExpr *)
+						makeXmlExpr(IS_XMLVALIDATE, NULL, $8,
+									list_make1($4),
+									@1);
+
+					x->xmloption = XMLOPTION_DOCUMENT;
+					x->location = @1;
+					$$ = (Node *) x;
+				}
 			| JSON_OBJECT '(' func_arg_list ')'
 				{
 					/* Support for legacy (non-standard) json_object() */
@@ -17958,6 +17969,7 @@ unreserved_keyword:
 			| ABSENT
 			| ABSOLUTE_P
 			| ACCESS
+			| ACCORDING
 			| ACTION
 			| ADD_P
 			| ADMIN
@@ -18367,6 +18379,7 @@ col_name_keyword:
 			| XMLROOT
 			| XMLSERIALIZE
 			| XMLTABLE
+			| XMLVALIDATE
 		;
 
 /* Type/function identifier --- keywords that can be type or function names.
@@ -18506,6 +18519,7 @@ bare_label_keyword:
 			| ABSENT
 			| ABSOLUTE_P
 			| ACCESS
+			| ACCORDING
 			| ACTION
 			| ADD_P
 			| ADMIN
@@ -18960,6 +18974,7 @@ bare_label_keyword:
 			| XMLSCHEMA
 			| XMLSERIALIZE
 			| XMLTABLE
+			| XMLVALIDATE
 			| YES_P
 			| ZONE
 		;

@@ -4510,8 +4510,11 @@ xml '<foo>bar</foo>'
     against a document type declaration
     (DTD),<indexterm><primary>DTD</primary></indexterm>
     even when the input value specifies a DTD.
-    There is also currently no built-in support for validating against
-    other XML schema languages such as XML Schema.
+    However, <productname>PostgreSQL</productname> provides the
+    <function>XMLVALIDATE</function> function for validating XML documents
+    against XML Schema (XSD) documents. See
+    <xref linkend="functions-xml-processing-xmlvalidate"/> and
+    <xref linkend="sql-createxmlschema"/> for more information.
    </para>
 
    <para>

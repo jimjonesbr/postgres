@@ -1010,6 +1010,111 @@ SELECT xmltable.*
 ]]></screen>
     </para>
    </sect3>
+
+   <sect3 id="functions-xml-processing-xmlvalidate">
+    <title><literal>xmlvalidate</literal></title>
+
+    <indexterm>
+     <primary>xmlvalidate</primary>
+    </indexterm>
+
+<synopsis>
+<function>XMLVALIDATE</function> ( <literal>DOCUMENT</literal> <replaceable>xml_value</replaceable> <literal>ACCORDING TO XMLSCHEMA</literal> <replaceable>schema_name</replaceable> ) <returnvalue>xml</returnvalue>
+</synopsis>
+
+    <para>
+     The <function>xmlvalidate</function> function validates an XML document
+     against an XML Schema. The schema must have been previously created using
+     <command>CREATE XMLSCHEMA</command>. If the XML is valid according to the
+     schema, the function returns the XML value unchanged. If validation fails,
+     an error is raised. If <replaceable>xml_value</replaceable> is
+     <literal>NULL</literal>, the function returns <literal>NULL</literal>.
+    </para>
+
+    <para>
+     The <replaceable>schema_name</replaceable> argument specifies the name
+     of an XML schema stored in the database. It can be schema-qualified
+     (e.g., <literal>myschema.person_schema</literal>) or unqualified, in
+     which case it will be searched for in the current schema search path.
+     The user must have <literal>USAGE</literal> privilege on the schema.
+    </para>
+
+    <para>
+     Examples:
+<screen><![CDATA[
+CREATE XMLSCHEMA person_schema AS '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="person">
+    <xs:complexType>
+      <xs:sequence>
+       <xs:element name="name" type="xs:string"/>
+        <xs:element name="age" type="xs:integer"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>';
+
+SELECT xmlvalidate(DOCUMENT '<person><name>John</name><age>30</age></person>'
+  ACCORDING TO XMLSCHEMA person_schema);
+
+                 xmlvalidate
+---------------------------------------------
+ <person><name>John</name><age>30</age></person>
+(1 row)
+]]></screen>
+    </para>
+
+    <para>
+     This example shows a validation failure due to a missing required element:
+<screen><![CDATA[
+SELECT xmlvalidate(DOCUMENT '<person><name>John</name></person>'
+  ACCORDING TO XMLSCHEMA person_schema);
+ERROR:  XML validation failed
+]]></screen>
+    </para>
+
+    <para>
+     Schema-qualified names are supported:
+<screen><![CDATA[
+CREATE SCHEMA test_schema;
+CREATE XMLSCHEMA test_schema.product_schema AS '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+ <xs:element name="product">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="name" type="xs:string"/>
+        <xs:element name="price" type="xs:decimal"/>
+      </xs:sequence>
+      <xs:attribute name="id" type="xs:string" use="required"/>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>';
+
+SELECT xmlvalidate(DOCUMENT '<product id="123"><name>Widget</name><price>9.99</price></product>'
+  ACCORDING TO XMLSCHEMA test_schema.product_schema);
+
+                          xmlvalidate
+---------------------------------------------------------------
+ <product id="123"><name>Widget</name><price>9.99</price></product>
+(1 row)
+]]></screen>
+    </para>
+
+    <para>
+     Since <function>xmlvalidate</function> returns <type>xml</type>, it can
+     be composed with other XML functions:
+<screen><![CDATA[
+SELECT xmlserialize(DOCUMENT
+  xmlvalidate(DOCUMENT '<person><name>Alice</name><age>25</age></person>'
+    ACCORDING TO XMLSCHEMA person_schema) AS text);
+
+              xmlserialize
+------------------------------------------
+ <person><name>Alice</name><age>25</age></person>
+(1 row)
+]]></screen>
+    </para>
+   </sect3>
   </sect2>
 
   <sect2 id="functions-xml-mapping">

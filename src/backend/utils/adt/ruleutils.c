@@ -10119,17 +10119,20 @@ get_rule_expr(Node *node, deparse_context *context,
 					case IS_XMLSERIALIZE:
 						appendStringInfoString(buf, "XMLSERIALIZE(");
 						break;
+					case IS_XMLVALIDATE:
+						appendStringInfoString(buf, "XMLVALIDATE(");
+						break;
 					case IS_DOCUMENT:
 						break;
 				}
-				if (xexpr->op == IS_XMLPARSE || xexpr->op == IS_XMLSERIALIZE)
+				if (xexpr->op == IS_XMLPARSE || xexpr->op == IS_XMLSERIALIZE || xexpr->op == IS_XMLVALIDATE)
 				{
 					if (xexpr->xmloption == XMLOPTION_DOCUMENT)
 						appendStringInfoString(buf, "DOCUMENT ");
 					else
 						appendStringInfoString(buf, "CONTENT ");
 				}
-				if (xexpr->name)
+				if (xexpr->name && xexpr->op != IS_XMLVALIDATE)
 				{
 					appendStringInfo(buf, "NAME %s",
 									 quote_identifier(map_xml_name_to_sql_identifier(xexpr->name)));
@@ -10172,6 +10175,9 @@ get_rule_expr(Node *node, deparse_context *context,
 						case IS_XMLSERIALIZE:
 							/* no extra decoration needed */
 							get_rule_expr((Node *) xexpr->args, context, true);
+							break;
+						case IS_XMLVALIDATE:
+							get_rule_expr((Node *) linitial(xexpr->args), context, true);
 							break;
 						case IS_XMLPARSE:
 							Assert(list_length(xexpr->args) == 2);
@@ -10240,6 +10246,13 @@ get_rule_expr(Node *node, deparse_context *context,
 						appendStringInfoString(buf, " INDENT");
 					else
 						appendStringInfoString(buf, " NO INDENT");
+				}
+
+				if (xexpr->op == IS_XMLVALIDATE)
+				{
+					/* Output the schema name stored during parse analysis */
+					appendStringInfo(buf, " ACCORDING TO XMLSCHEMA %s",
+									 quote_identifier(xexpr->name));
 				}
 
 				if (xexpr->op == IS_DOCUMENT)
