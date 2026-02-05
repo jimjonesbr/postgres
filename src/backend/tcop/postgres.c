@@ -72,6 +72,7 @@
 #include "tcop/pquery.h"
 #include "tcop/tcopprot.h"
 #include "tcop/utility.h"
+#include "utils/elog.h"
 #include "utils/guc_hooks.h"
 #include "utils/injection_point.h"
 #include "utils/lsyscache.h"
@@ -1023,11 +1024,15 @@ exec_simple_query(const char *query_string)
 	bool		was_logged = false;
 	bool		use_implicit_block;
 	char		msec_str[32];
+	char	   *truncated_query = NULL;
+	const char *query_log;
 
 	/*
 	 * Report query to various monitoring facilities.
 	 */
 	debug_query_string = query_string;
+	truncated_query = truncate_query_log(query_string);
+	query_log = truncated_query ? truncated_query : query_string;
 
 	pgstat_report_activity(STATE_RUNNING, query_string);
 
@@ -1072,7 +1077,7 @@ exec_simple_query(const char *query_string)
 	if (check_log_statement(parsetree_list))
 	{
 		ereport(LOG,
-				(errmsg("statement: %s", query_string),
+				(errmsg("statement: %s", query_log),
 				 errhidestmt(true),
 				 errdetail_execute(parsetree_list)));
 		was_logged = true;
@@ -1370,7 +1375,7 @@ exec_simple_query(const char *query_string)
 		case 2:
 			ereport(LOG,
 					(errmsg("duration: %s ms  statement: %s",
-							msec_str, query_string),
+							msec_str, query_log),
 					 errhidestmt(true),
 					 errdetail_execute(parsetree_list)));
 			break;
@@ -1381,6 +1386,8 @@ exec_simple_query(const char *query_string)
 
 	TRACE_POSTGRESQL_QUERY_DONE(query_string);
 
+	if (truncated_query)
+		pfree(truncated_query);
 	debug_query_string = NULL;
 }
 

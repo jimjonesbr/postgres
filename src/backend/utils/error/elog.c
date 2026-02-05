@@ -3805,6 +3805,37 @@ write_stderr(const char *fmt,...)
 	va_end(ap);
 }
 
+/*
+ * truncate_query_log - truncate query string if needed for logging
+ *
+ * Returns a palloc'd truncated copy if truncation is needed,
+ * or NULL if no truncation is required.
+ */
+char *
+truncate_query_log(const char *query)
+{
+	size_t		query_len;
+	size_t		truncated_len;
+	char	   *truncated_query;
+
+	/* Check if truncation is disabled (-1) or no query string provided */
+	if (!query || log_statement_max_length < 0)
+		return NULL;
+
+	query_len = strlen(query);
+
+	/* Query shorter than limit? No need to allocate a truncated copy */
+	if (query_len <= (size_t) log_statement_max_length)
+		return NULL;
+
+	/* Truncate at multibyte character boundary */
+	truncated_len = pg_mbcliplen(query, query_len, log_statement_max_length);
+	truncated_query = (char *) palloc(truncated_len + 1);
+	memcpy(truncated_query, query, truncated_len);
+	truncated_query[truncated_len] = '\0';
+
+	return truncated_query;
+}
 
 /*
  * Write errors to stderr (or by equal means when stderr is

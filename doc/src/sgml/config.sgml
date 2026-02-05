@@ -8235,6 +8235,22 @@ log_line_prefix = '%m [%p] %q%u@%d/%a '
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-log-statement-max-length" xreflabel="log_statement_max_length">
+      <term><varname>log_statement_max_length</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>log_statement_max_length</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        If greater than zero, each statement logged by <xref linkend="guc-log-statement"/>
+        is truncated to this many bytes.
+        <literal>-1</literal> (the default) disables truncation.
+        If this value is specified without units, it is taken as bytes.
+       </para>
+      </listitem>
+     </varlistentry>
+
      </variablelist>
     </sect2>
      <sect2 id="runtime-config-logging-csvlog">

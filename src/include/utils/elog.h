@@ -494,6 +494,7 @@ extern PGDLLIMPORT int Log_destination;
 extern PGDLLIMPORT char *Log_destination_string;
 extern PGDLLIMPORT bool syslog_sequence_numbers;
 extern PGDLLIMPORT bool syslog_split_messages;
+extern PGDLLIMPORT int log_statement_max_length;
 
 /* Log destination bitmap */
 #define LOG_DESTINATION_STDERR	 1
@@ -508,6 +509,8 @@ extern void log_status_format(StringInfo buf, const char *format,
 extern void DebugFileOpen(void);
 extern char *unpack_sql_state(int sql_state);
 extern bool in_error_recursion_trouble(void);
+
+extern char *truncate_query_log(const char *query);
 
 /* Common functions shared across destinations */
 extern void reset_formatted_start_time(void);

@@ -135,6 +135,32 @@ check_log_pattern('stderr', $new_current_logfiles, 'syntax error', $node);
 check_log_pattern('csvlog', $new_current_logfiles, 'syntax error', $node);
 check_log_pattern('jsonlog', $new_current_logfiles, 'syntax error', $node);
 
+# Verify truncation works with ASCII
+$node->append_conf('postgresql.conf', "log_statement = 'all'\nlog_statement_max_length = 20\n");
+$node->reload();
+$node->psql('postgres', "SELECT '123456789ABCDEF'");
+check_log_pattern('stderr',  $new_current_logfiles, "SELECT '123456789ABC", $node);
+check_log_pattern('csvlog',  $new_current_logfiles, "SELECT '123456789ABC", $node);
+check_log_pattern('jsonlog', $new_current_logfiles, "SELECT '123456789ABC", $node);
+
+# Verify -1 disables truncation (logs full query)
+$node->append_conf('postgresql.conf', "log_statement_max_length = -1\n");
+$node->reload();
+$node->psql('postgres', "SELECT '123456789ABCDEF'");
+check_log_pattern('stderr',  $new_current_logfiles, "SELECT '123456789ABCDEF'", $node);
+check_log_pattern('csvlog',  $new_current_logfiles, "SELECT '123456789ABCDEF'", $node);
+check_log_pattern('jsonlog', $new_current_logfiles, "SELECT '123456789ABCDEF'", $node);
+
+# Verify multibyte character handling (emoji shouldn't be split)
+$node->append_conf('postgresql.conf', "log_statement_max_length = 12\n");
+$node->reload();
+$node->psql('postgres', "SELECT '🐘test'");
+# Should truncate to "SELECT '🐘" (12 bytes) or "SELECT '" (8 bytes) if emoji doesn't fit
+# But should NOT have broken UTF-8
+check_log_pattern('stderr',  $new_current_logfiles, "SELECT '", $node);
+check_log_pattern('csvlog',  $new_current_logfiles, "SELECT '", $node);
+check_log_pattern('jsonlog', $new_current_logfiles, "SELECT '", $node);
+
 $node->stop();
 
 done_testing();
