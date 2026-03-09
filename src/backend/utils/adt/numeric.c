@@ -848,6 +848,28 @@ numeric_is_inf(Numeric num)
 }
 
 /*
+ * numeric_is_positive_inf() -
+ *
+ *	Is Numeric value positive infinity?
+ */
+bool
+numeric_is_positive_inf(Numeric num)
+{
+	return NUMERIC_IS_PINF(num);
+}
+
+/*
+ * numeric_is_negative_inf() -
+ *
+ *	Is Numeric value negative infinity?
+ */
+bool
+numeric_is_negative_inf(Numeric num)
+{
+	return NUMERIC_IS_NINF(num);
+}
+
+/*
  * numeric_is_integral() -
  *
  *	Is Numeric value integral?
