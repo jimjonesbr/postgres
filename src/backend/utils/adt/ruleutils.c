@@ -10638,6 +10638,7 @@ get_rule_expr(Node *node, deparse_context *context,
 				bool		needcomma = false;
 				ListCell   *arg;
 				ListCell   *narg;
+				ListCell   *nsarg;
 				Const	   *con;
 
 				switch (xexpr->op)
@@ -10681,26 +10682,92 @@ get_rule_expr(Node *node, deparse_context *context,
 				}
 				if (xexpr->named_args)
 				{
-					if (xexpr->op != IS_XMLFOREST)
+					bool has_func_call = false;
+
+					forthree(arg, xexpr->named_args, narg, xexpr->arg_names, nsarg, xexpr->xmlnamespaces)
 					{
-						if (needcomma)
-							appendStringInfoString(buf, ", ");
-						appendStringInfoString(buf, "XMLATTRIBUTES(");
-						needcomma = false;
-					}
-					forboth(arg, xexpr->named_args, narg, xexpr->arg_names)
-					{
-						Node	   *e = (Node *) lfirst(arg);
-						char	   *argname = strVal(lfirst(narg));
+						Node *e = (Node *)lfirst(arg);
+						char *argname = strVal(lfirst(narg));
+						char *prefix = strVal(lfirst(nsarg));
+
+						/* we skip this entry, as it is not a XMLATTRIBUTES argument */
+						if (strlen(prefix) != 0)
+							continue;
+
+						if (!has_func_call)
+						{
+							if (xexpr->op != IS_XMLFOREST)
+							{
+								if (needcomma)
+									appendStringInfoString(buf, ", ");
+								appendStringInfoString(buf, "XMLATTRIBUTES(");
+								needcomma = false;
+							}
+
+							has_func_call = true;
+						}
 
 						if (needcomma)
 							appendStringInfoString(buf, ", ");
-						get_rule_expr(e, context, true);
+
+						get_rule_expr((Node *)e, context, true);
 						appendStringInfo(buf, " AS %s",
 										 quote_identifier(map_xml_name_to_sql_identifier(argname)));
 						needcomma = true;
 					}
-					if (xexpr->op != IS_XMLFOREST)
+					if (xexpr->op != IS_XMLFOREST && has_func_call)
+						appendStringInfoChar(buf, ')');
+
+					has_func_call = false;
+
+					forthree(arg, xexpr->named_args, narg, xexpr->arg_names, nsarg, xexpr->xmlnamespaces)
+					{
+						Node *e = (Node *)lfirst(arg);
+						char *argname = strVal(lfirst(narg));
+						char *prefix = strVal(lfirst(nsarg));
+
+						/* we skip this entry, as it is not a XMLNAMESPACES argument */
+						if (strlen(prefix) == 0)
+							continue;
+
+						if (!has_func_call)
+						{
+							if (xexpr->op != IS_XMLFOREST)
+							{
+								if (needcomma)
+									appendStringInfoString(buf, ", ");
+								appendStringInfoString(buf, "XMLNAMESPACES(");
+								needcomma = false;
+							}
+
+							has_func_call = true;
+						}
+
+						if (needcomma)
+							appendStringInfoString(buf, ", ");
+
+						if (strlen(argname) == 0)
+						{
+							/*
+							 * Both DEFAULT '' and NO DEFAULT are stored as an
+							 * empty-string Const after transformation, so we
+							 * always deparse as DEFAULT <expr>.  NO DEFAULT
+							 * is not round-tripped exactly, but the two forms
+							 * are semantically equivalent (both produce
+							 * xmlns="").
+							 */
+							appendStringInfo(buf, "DEFAULT ");
+							get_rule_expr((Node *)e, context, true);
+						}
+						else
+						{
+							get_rule_expr((Node *)e, context, true);
+							appendStringInfo(buf, " AS %s",
+											 quote_identifier(map_xml_name_to_sql_identifier(argname)));
+						}
+						needcomma = true;
+					}
+					if (xexpr->op != IS_XMLFOREST && has_func_call)
 						appendStringInfoChar(buf, ')');
 				}
 				if (xexpr->args)
