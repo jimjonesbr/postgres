@@ -110,6 +110,7 @@ typedef enum
 	CONNECTION_CHECK_TARGET,	/* Internal state: checking target server
 								 * properties. */
 	CONNECTION_CHECK_STANDBY,	/* Checking if server is in standby mode. */
+	CONNECTION_CHECK_WAL_REPLAY_SIZE, /* Checking WAL replay size on standby. */
 	CONNECTION_ALLOCATED,		/* Waiting for connection attempt to be
 								 * started.  */
 	CONNECTION_AUTHENTICATING,	/* Authentication is in progress with some

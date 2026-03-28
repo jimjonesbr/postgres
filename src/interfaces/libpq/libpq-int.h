@@ -425,6 +425,8 @@ struct pg_conn
 	char	   *ssl_min_protocol_version;	/* minimum TLS protocol version */
 	char	   *ssl_max_protocol_version;	/* maximum TLS protocol version */
 	char	   *target_session_attrs;	/* desired session properties */
+	char	   *max_wal_replay_size;		/* maximum WAL replay size allowed */
+	bool		wal_replay_size_checked; /* WAL replay size check done for current host */
 	char	   *require_auth;	/* name of the expected auth method */
 	char	   *load_balance_hosts; /* load balance over hosts */
 	char	   *scram_client_key;	/* base64-encoded SCRAM client key */

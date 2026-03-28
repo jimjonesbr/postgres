@@ -385,6 +385,10 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 		"Target-Session-Attrs", "", 15, /* sizeof("prefer-standby") = 15 */
 	offsetof(struct pg_conn, target_session_attrs)},
 
+	{"max_wal_replay_size", "PGMAXWALREPLAYSIZE", NULL, NULL,
+		"Max-WAL-replay-size", "", 64,
+	offsetof(struct pg_conn, max_wal_replay_size)},
+
 	{"load_balance_hosts", "PGLOADBALANCEHOSTS",
 		DefaultLoadBalanceHosts, NULL,
 		"Load-Balance-Hosts", "", 8,	/* sizeof("disable") = 8 */
@@ -512,10 +516,8 @@ static bool sslVerifyProtocolVersion(const char *version);
 static bool sslVerifyProtocolRange(const char *min, const char *max);
 static bool pqParseProtocolVersion(const char *value, ProtocolVersion *result, PGconn *conn, const char *context);
 
-
 /* global variable because fe-auth.c needs to access it */
 pgthreadlock_t pg_g_threadlock = default_threadlock;
-
 
 /*
  *		pqDropConnection
@@ -686,6 +688,7 @@ pqDropServerData(PGconn *conn)
 	conn->std_strings = false;
 	conn->default_transaction_read_only = PG_BOOL_UNKNOWN;
 	conn->in_hot_standby = PG_BOOL_UNKNOWN;
+	conn->wal_replay_size_checked = false;
 	conn->scram_sha_256_iterations = SCRAM_SHA_256_DEFAULT_ITERATIONS;
 	conn->sversion = 0;
 
@@ -2119,6 +2122,43 @@ pqConnectOptions2(PGconn *conn)
 		}
 	}
 
+	/*
+	 * Validate the max_wal_replay_size option.
+	 *
+	 * The value is passed directly into a SQL query as a string literal
+	 * (inside single quotes).  This allowlist blocks every character that
+	 * could escape the quotes or otherwise alter the query — in particular
+	 * single quotes, backslashes, and non-ASCII bytes.  Signs ('+'/'-') are
+	 * also excluded: pg_size_bytes() does not accept them, so permitting
+	 * them would only produce a confusing server-side error.
+	 *
+	 * This is a security boundary, not a full semantic validator.  Values
+	 * such as "10XY" pass this check but will be rejected by pg_size_bytes()
+	 * on the server with a clear "invalid size" error.  There is no
+	 * pg_size_bytes()-equivalent available in libpq, so complete client-side
+	 * validation would require duplicating backend logic.
+	 */
+	if (conn->max_wal_replay_size)
+	{
+		const char *p;
+
+		for (p = conn->max_wal_replay_size; *p; p++)
+		{
+			if (!isascii((unsigned char)*p) ||
+				(!isdigit((unsigned char)*p) &&
+				 !isalpha((unsigned char)*p) &&
+				 !isspace((unsigned char)*p) &&
+				 *p != '.'))
+			{
+				conn->status = CONNECTION_BAD;
+				libpq_append_conn_error(conn, "invalid %s value: \"%s\"",
+										"max_wal_replay_size",
+										conn->max_wal_replay_size);
+				return false;
+			}
+		}
+	}
+
 	if (conn->min_protocol_version)
 	{
 		if (!pqParseProtocolVersion(conn->min_protocol_version, &conn->min_pversion, conn, "min_protocol_version"))
@@ -2947,6 +2987,7 @@ PQconnectPoll(PGconn *conn)
 		case CONNECTION_CHECK_WRITABLE:
 		case CONNECTION_CONSUME:
 		case CONNECTION_CHECK_STANDBY:
+		case CONNECTION_CHECK_WAL_REPLAY_SIZE:
 			{
 				/* Load waiting data */
 				int			n = pqReadData(conn);
@@ -4426,6 +4467,58 @@ keep_going:						/* We will come back to here until there is
 
 		case CONNECTION_CHECK_TARGET:
 			{
+
+				/*
+				 * Servers before 9.0 have no hot standby mode at all, so treat
+				 * them as primaries unconditionally.  This mirrors the same check
+				 * in the SERVER_TYPE_PRIMARY/STANDBY branch below, but must be
+				 * done here first so that the WAL replay size check guard (which
+				 * tests in_hot_standby) sees the correct value even when
+				 * target_session_attrs=any.
+				 */
+				if (conn->sversion < 90000)
+					conn->in_hot_standby = PG_BOOL_NO;
+
+				/*
+				 * If the user specified a max WAL replay size, and we haven't
+				 * yet checked it for this host, and the server is not known to
+				 * be a primary, send an async query to evaluate the replay size.
+				 * The check is skipped when target_session_attrs requires a
+				 * primary or read-write session, and when the server has already
+				 * been identified as a primary via startup parameters.
+				 */
+				if (conn->max_wal_replay_size &&
+					!conn->wal_replay_size_checked &&
+					conn->target_server_type != SERVER_TYPE_PRIMARY &&
+					conn->target_server_type != SERVER_TYPE_READ_WRITE &&
+					conn->in_hot_standby != PG_BOOL_NO)
+				{
+					char qbuf[512];
+
+					/*
+					 * Build a single query that determines recovery status and
+					 * evaluates the replay size in one round-trip.  We include
+					 * pg_is_in_recovery() so that primaries (where in_hot_standby
+					 * may still be unknown) are handled correctly without a
+					 * separate query.
+					 */
+					snprintf(qbuf, sizeof(qbuf),
+							 "SELECT"
+							 " pg_catalog.pg_is_in_recovery(),"
+							 " pg_wal_lsn_diff(pg_last_wal_receive_lsn(),"
+							 "  pg_last_wal_replay_lsn())"
+							 "  > pg_catalog.pg_size_bytes('%s'),"
+							 " pg_catalog.pg_size_pretty("
+							 "  pg_wal_lsn_diff(pg_last_wal_receive_lsn(),"
+							 "  pg_last_wal_replay_lsn()))",
+							 conn->max_wal_replay_size);
+					conn->status = CONNECTION_OK;
+					if (!PQsendQueryContinue(conn, qbuf))
+						goto error_return;
+					conn->status = CONNECTION_CHECK_WAL_REPLAY_SIZE;
+					return PGRES_POLLING_READING;
+				}
+
 				/*
 				 * If a read-write, read-only, primary, or standby connection
 				 * is required, see if we have one.
@@ -4710,6 +4803,98 @@ keep_going:						/* We will come back to here until there is
 				sendTerminateConn(conn);
 
 				/* Try next host. */
+				conn->try_next_host = true;
+				goto keep_going;
+			}
+
+		case CONNECTION_CHECK_WAL_REPLAY_SIZE:
+			{
+				/*
+				 * Waiting for result of the WAL replay size check query.  We
+				 * must transiently set status = CONNECTION_OK in order to use
+				 * the result-consuming subroutines.
+				 *
+				 * All functions in the query (pg_is_in_recovery,
+				 * pg_last_wal_receive_lsn, pg_last_wal_replay_lsn,
+				 * pg_wal_lsn_diff, pg_size_bytes, pg_size_pretty) are
+				 * granted to PUBLIC, so unprivileged users obtain the same
+				 * results as superusers.  This is intentional: the check
+				 * must work for any connecting role.
+				 *
+				 * The query returns three columns:
+				 *   0: pg_is_in_recovery()       -- bool
+				 *   1: size_exceeds_threshold    -- bool, or NULL if no
+				 *                                   WAL receiver is active
+				 *   2: size_pretty               -- text, or NULL
+				 */
+				conn->status = CONNECTION_OK;
+				if (!PQconsumeInput(conn))
+					goto error_return;
+
+				if (PQisBusy(conn))
+				{
+					conn->status = CONNECTION_CHECK_WAL_REPLAY_SIZE;
+					return PGRES_POLLING_READING;
+				}
+
+				res = PQgetResult(conn);
+				if (res && PQresultStatus(res) == PGRES_TUPLES_OK &&
+					PQntuples(res) == 1)
+				{
+					/* col 0: not in recovery means this is a primary */
+					if (strcmp(PQgetvalue(res, 0, 0), "f") == 0)
+					{
+						conn->in_hot_standby = PG_BOOL_NO;
+						PQclear(res);
+						conn->wal_replay_size_checked = true;
+						conn->status = CONNECTION_CONSUME;
+						goto keep_going;
+					}
+
+					/*
+					 * col 1: NULL means pg_last_wal_receive_lsn() returned
+					 * NULL, i.e., no WAL receiver is active on this standby.
+					 */
+					else if (PQgetisnull(res, 0, 1))
+					{
+						libpq_append_conn_error(conn,
+												"standby is not connected to primary (no WAL receiver active)");
+						PQclear(res);
+						conn->status = CONNECTION_OK;
+						sendTerminateConn(conn);
+						conn->try_next_host = true;
+						goto keep_going;
+					}
+
+					/* col 1: size exceeds the threshold */
+					else if (strcmp(PQgetvalue(res, 0, 1), "t") == 0)
+					{
+						char	   *size_pretty = PQgetvalue(res, 0, 2);
+
+						libpq_append_conn_error(conn,
+												"WAL replay size on standby is too large: %s (max_wal_replay_size=%s)",
+												size_pretty,
+												conn->max_wal_replay_size);
+						PQclear(res);
+						conn->status = CONNECTION_OK;
+						sendTerminateConn(conn);
+						conn->try_next_host = true;
+						goto keep_going;
+					}
+
+					/* Replay size is within the acceptable threshold */
+					conn->in_hot_standby = PG_BOOL_YES;
+					PQclear(res);
+					conn->wal_replay_size_checked = true;
+					conn->status = CONNECTION_CONSUME;
+					goto keep_going;
+				}
+
+				/* Something went wrong with the WAL replay size check query. */
+				PQclear(res);
+				libpq_append_conn_error(conn, "could not evaluate WAL replay size");
+				conn->status = CONNECTION_OK;
+				sendTerminateConn(conn);
 				conn->try_next_host = true;
 				goto keep_going;
 			}
@@ -5033,13 +5218,14 @@ pqMakeEmptyPGconn(void)
 	conn->std_strings = false;	/* unless server says differently */
 	conn->default_transaction_read_only = PG_BOOL_UNKNOWN;
 	conn->in_hot_standby = PG_BOOL_UNKNOWN;
+	conn->wal_replay_size_checked = false;
 	conn->scram_sha_256_iterations = SCRAM_SHA_256_DEFAULT_ITERATIONS;
 	conn->verbosity = PQERRORS_DEFAULT;
 	conn->show_context = PQSHOW_CONTEXT_ERRORS;
 	conn->sock = PGINVALID_SOCKET;
 	conn->altsock = PGINVALID_SOCKET;
 	conn->Pfdebug = NULL;
-
+	conn->max_wal_replay_size = NULL;
 	/*
 	 * We try to send at least 8K at a time, which is the usual size of pipe
 	 * buffers on Unix systems.  That way, when we are sending a large amount
