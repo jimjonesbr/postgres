@@ -10663,6 +10663,9 @@ get_rule_expr(Node *node, deparse_context *context,
 					case IS_XMLSERIALIZE:
 						appendStringInfoString(buf, "XMLSERIALIZE(");
 						break;
+					case IS_XMLCAST:
+						appendStringInfoString(buf, "XMLCAST(");
+						break;
 					case IS_DOCUMENT:
 						break;
 				}
@@ -10673,7 +10676,7 @@ get_rule_expr(Node *node, deparse_context *context,
 					else
 						appendStringInfoString(buf, "CONTENT ");
 				}
-				if (xexpr->name)
+				if (xexpr->name && xexpr->op != IS_XMLCAST)
 				{
 					appendStringInfo(buf, "NAME %s",
 									 quote_identifier(map_xml_name_to_sql_identifier(xexpr->name)));
@@ -10709,6 +10712,7 @@ get_rule_expr(Node *node, deparse_context *context,
 						appendStringInfoString(buf, ", ");
 					switch (xexpr->op)
 					{
+						case IS_XMLCAST:
 						case IS_XMLCONCAT:
 						case IS_XMLELEMENT:
 						case IS_XMLFOREST:
@@ -10785,6 +10789,11 @@ get_rule_expr(Node *node, deparse_context *context,
 					else
 						appendStringInfoString(buf, " NO INDENT");
 				}
+
+				if (xexpr->op == IS_XMLCAST)
+					appendStringInfo(buf, " AS %s",
+									 format_type_with_typemod(xexpr->targetType,
+															  xexpr->targetTypmod));
 
 				if (xexpr->op == IS_DOCUMENT)
 					appendStringInfoString(buf, " IS DOCUMENT");
