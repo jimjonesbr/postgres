@@ -972,6 +972,16 @@ read_stream_begin_relation(int flags,
 						   void *callback_private_data,
 						   size_t per_buffer_data_size)
 {
+	/*
+	 * Reject attempts to read non-local temporary relations; we would be
+	 * likely to get wrong data since we have no visibility into the owning
+	 * session's local buffers.
+	 */
+	if (RELATION_IS_OTHER_TEMP(rel))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot access temporary relations of other sessions")));
+
 	return read_stream_begin_impl(flags,
 								  strategy,
 								  rel,

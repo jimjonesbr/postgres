@@ -795,7 +795,7 @@ PrefetchBuffer(Relation reln, ForkNumber forkNum, BlockNumber blockNum)
 		if (RELATION_IS_OTHER_TEMP(reln))
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("cannot access temporary tables of other sessions")));
+					 errmsg("cannot access temporary relations of other sessions")));
 
 		/* pass it off to localbuf.c */
 		return PrefetchLocalBuffer(RelationGetSmgr(reln), forkNum, blockNum);
@@ -936,7 +936,7 @@ ReadBufferExtended(Relation reln, ForkNumber forkNum, BlockNumber blockNum,
 	if (RELATION_IS_OTHER_TEMP(reln))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("cannot access temporary tables of other sessions")));
+				 errmsg("cannot access temporary relations of other sessions")));
 
 	/*
 	 * Read the buffer, and update pgstat counters to reflect a cache hit or
@@ -1316,6 +1316,16 @@ ReadBuffer_common(Relation rel, SMgrRelation smgr, char smgr_persistence,
 		persistence = rel->rd_rel->relpersistence;
 	else
 		persistence = smgr_persistence;
+
+	/*
+	 * Safety net for callers (e.g. via ExtendBufferedRelTo) that reach here
+	 * without going through ReadBufferExtended.  See ReadBufferExtended for
+	 * the primary check and full explanation.
+	 */
+	if (rel != NULL && RELATION_IS_OTHER_TEMP(rel))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot access temporary relations of other sessions")));
 
 	if (unlikely(mode == RBM_ZERO_AND_CLEANUP_LOCK ||
 				 mode == RBM_ZERO_AND_LOCK))
