@@ -510,6 +510,7 @@ extern void log_status_format(StringInfo buf, const char *format,
 extern void DebugFileOpen(void);
 extern char *unpack_sql_state(int sql_state);
 extern bool in_error_recursion_trouble(void);
+extern char *truncate_query_log(const char *query);
 
 /* Common functions shared across destinations */
 extern void reset_formatted_start_time(void);
