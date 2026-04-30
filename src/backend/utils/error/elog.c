@@ -3195,6 +3195,41 @@ check_log_of_query(ErrorData *edata)
 }
 
 /*
+ * truncate_query_log - truncate query string if needed for logging
+ *
+ * Returns a palloc'd truncated copy if truncation is needed,
+ * or NULL if no truncation is required.
+ */
+char *
+truncate_query_log(const char *query)
+{
+	size_t		query_len;
+	size_t		truncated_len;
+	char	   *truncated_query;
+
+	/* Truncation is disabled when the limit is negative */
+	if (!query || log_statement_max_length < 0)
+		return NULL;
+
+	query_len = strlen(query);
+
+	/*
+	 * No need to allocate a truncated copy if the query is shorter
+	 * than log_statement_max_length.
+	 */
+	if (query_len <= (size_t) log_statement_max_length)
+		return NULL;
+
+	/* Truncate at a multibyte character boundary */
+	truncated_len = pg_mbcliplen(query, query_len, log_statement_max_length);
+	truncated_query = (char *) palloc(truncated_len + 1);
+	memcpy(truncated_query, query, truncated_len);
+	truncated_query[truncated_len] = '\0';
+
+	return truncated_query;
+}
+
+/*
  * get_backend_type_for_log -- backend type for log entries
  *
  * Returns a pointer to a static buffer, not palloc()'d.
