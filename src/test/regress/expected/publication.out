@@ -146,8 +146,6 @@ RESET client_min_messages;
           Owner           | All tables | All sequences | Inserts | Updates | Deletes | Truncates | Generated columns | Via root | Description 
 --------------------------+------------+---------------+---------+---------+---------+-----------+-------------------+----------+-------------
  regress_publication_user | f          | f             | t       | t       | t       | t         | none              | f        | 
-Tables:
-    "pub_test.testpub_nopk"
 Tables from schemas:
     "pub_test"
 
@@ -167,8 +165,6 @@ ALTER PUBLICATION testpub_forschema ADD TABLE pub_test.testpub_nopk;
           Owner           | All tables | All sequences | Inserts | Updates | Deletes | Truncates | Generated columns | Via root | Description 
 --------------------------+------------+---------------+---------+---------+---------+-----------+-------------------+----------+-------------
  regress_publication_user | f          | f             | t       | t       | t       | t         | none              | f        | 
-Tables:
-    "pub_test.testpub_nopk"
 Tables from schemas:
     "pub_test"
 
@@ -832,8 +828,6 @@ RESET client_min_messages;
           Owner           | All tables | All sequences | Inserts | Updates | Deletes | Truncates | Generated columns | Via root | Description 
 --------------------------+------------+---------------+---------+---------+---------+-----------+-------------------+----------+-------------
  regress_publication_user | f          | f             | t       | t       | t       | t         | none              | f        | 
-Tables:
-    "testpub_rf_schema2.testpub_rf_tbl6" WHERE (i < 99)
 Tables from schemas:
     "testpub_rf_schema2"
 

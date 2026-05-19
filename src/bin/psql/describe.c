@@ -7015,7 +7015,12 @@ describePublications(const char *pattern)
 							  "     pg_catalog.pg_publication_rel pr\n"
 							  "WHERE c.relnamespace = n.oid\n"
 							  "  AND c.oid = pr.prrelid\n"
-							  "  AND pr.prpubid = '%s'\n", pubid);
+							  "  AND pr.prpubid = '%s'\n"
+							  "  AND n.oid NOT IN (\n"
+							  "     SELECT pn.pnnspid\n"
+							  "     FROM pg_catalog.pg_publication_namespace pn\n"
+							  "     WHERE pn.pnpubid = '%s'\n)",
+							  pubid, pubid);
 
 			if (pset.sversion >= 190000)
 				appendPQExpBufferStr(&buf, "  AND NOT pr.prexcept\n");
