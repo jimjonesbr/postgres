@@ -3199,7 +3199,12 @@ describeOneTableDetails(const char *schemaname,
 								  "FROM pg_catalog.pg_publication p\n"
 								  "     JOIN pg_catalog.pg_publication_rel pr ON p.oid = pr.prpubid\n"
 								  "     JOIN pg_catalog.pg_class c ON c.oid = pr.prrelid\n"
-								  "WHERE pr.prrelid = '%s'\n",
+								  "WHERE pr.prrelid = '%s'\n"
+								  "  AND NOT EXISTS (\n"
+								  "     SELECT 1\n"
+								  "     FROM pg_catalog.pg_publication_namespace pn\n"
+								  "     WHERE pn.pnpubid = p.oid\n"
+								  "       AND pn.pnnspid = c.relnamespace)\n",
 								  oid, oid, oid);
 
 				if (pset.sversion >= 190000)
@@ -7019,7 +7024,7 @@ describePublications(const char *pattern)
 							  "  AND n.oid NOT IN (\n"
 							  "     SELECT pn.pnnspid\n"
 							  "     FROM pg_catalog.pg_publication_namespace pn\n"
-							  "     WHERE pn.pnpubid = '%s'\n)",
+"     WHERE pn.pnpubid = '%s')\n",
 							  pubid, pubid);
 
 			if (pset.sversion >= 190000)
