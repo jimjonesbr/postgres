@@ -427,6 +427,7 @@ struct pg_conn
 	char	   *ssl_min_protocol_version;	/* minimum TLS protocol version */
 	char	   *ssl_max_protocol_version;	/* maximum TLS protocol version */
 	char	   *target_session_attrs;	/* desired session properties */
+	char	   *require_wal_receiver;	/* reject standby w/o live walreceiver */
 	char	   *require_auth;	/* name of the expected auth method */
 	char	   *load_balance_hosts; /* load balance over hosts */
 	char	   *scram_client_key;	/* base64-encoded SCRAM client key */
@@ -550,6 +551,7 @@ struct pg_conn
 	uint8	   *scram_server_key_binary;	/* binary SCRAM server key */
 	ProtocolVersion min_pversion;	/* protocol version to request */
 	ProtocolVersion max_pversion;	/* protocol version to request */
+	bool	   replication_checked;	/* replication check done for current host */
 
 	/* Miscellaneous stuff */
 	int			be_pid;			/* PID of backend --- needed for cancels */
@@ -564,6 +566,7 @@ struct pg_conn
 	PGContextVisibility show_context;	/* whether to show CONTEXT field */
 	PGlobjfuncs *lobjfuncs;		/* private state for large-object access fns */
 	pg_prng_state prng_state;	/* prng state for load balancing connections */
+	bool		require_wal_receiver_parsed;
 
 
 	/*

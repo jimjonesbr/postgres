@@ -385,6 +385,11 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 		"Target-Session-Attrs", "", 15, /* sizeof("prefer-standby") = 15 */
 	offsetof(struct pg_conn, target_session_attrs)},
 
+	{"require_wal_receiver", "PGREQUIREWALRECEIVER",
+		"0", NULL,
+		"Require-WAL-Receiver", "", 1,
+	offsetof(struct pg_conn, require_wal_receiver)},
+
 	{"load_balance_hosts", "PGLOADBALANCEHOSTS",
 		DefaultLoadBalanceHosts, NULL,
 		"Load-Balance-Hosts", "", 8,	/* sizeof("disable") = 8 */
@@ -515,7 +520,7 @@ static void default_threadlock(int acquire);
 static bool sslVerifyProtocolVersion(const char *version);
 static bool sslVerifyProtocolRange(const char *min, const char *max);
 static bool pqParseProtocolVersion(const char *value, ProtocolVersion *result, PGconn *conn, const char *context);
-
+static bool pqParseBoolConnOption(const char *value, bool *result, PGconn *conn, const char *optname);
 
 /* global variable because fe-auth.c needs to access it */
 pgthreadlock_t pg_g_threadlock = default_threadlock;
@@ -2128,6 +2133,15 @@ pqConnectOptions2(PGconn *conn)
 		}
 	}
 
+	if (conn->require_wal_receiver)
+	{
+		if (!pqParseBoolConnOption(conn->require_wal_receiver, &conn->require_wal_receiver_parsed, conn, "require_wal_receiver"))
+		{
+			conn->status = CONNECTION_BAD;
+			return false;
+		}
+	}
+
 	if (conn->min_protocol_version)
 	{
 		if (!pqParseProtocolVersion(conn->min_protocol_version, &conn->min_pversion, conn, "min_protocol_version"))
@@ -2956,6 +2970,7 @@ PQconnectPoll(PGconn *conn)
 		case CONNECTION_CHECK_WRITABLE:
 		case CONNECTION_CONSUME:
 		case CONNECTION_CHECK_STANDBY:
+		case CONNECTION_CHECK_REPLICATION:
 			{
 				/* Load waiting data */
 				int			n = pqReadData(conn);
@@ -4436,6 +4451,59 @@ keep_going:						/* We will come back to here until there is
 		case CONNECTION_CHECK_TARGET:
 			{
 				/*
+				 * Servers before 9.0 have no hot standby, so treat them as
+				 * primaries.  Must run before the replication-check guard so
+				 * that its in_hot_standby test is correct even when
+				 * target_session_attrs=any.
+				 */
+				if (conn->sversion < 90000)
+					conn->in_hot_standby = PG_BOOL_NO;
+
+				/*
+				 * If require_wal_receiver is set, and we haven't yet checked
+				 * this host, and the server isn't known to be a primary, verify
+				 * that it has a live WAL receiver before accepting it.  Skipped
+				 * when target_session_attrs requires a primary/read-write
+				 * session, since the check is meaningless there.
+				 */
+				if (conn->require_wal_receiver_parsed &&
+					!conn->replication_checked &&
+					conn->target_server_type != SERVER_TYPE_PRIMARY &&
+					conn->target_server_type != SERVER_TYPE_READ_WRITE &&
+					conn->in_hot_standby != PG_BOOL_NO)
+				{
+					/*
+					 * pg_stat_wal_receiver, which the check below depends on, was
+					 * added in 9.6. We can't verify WAL receiver liveness on older
+					 * servers, so treat them as failing the check rather than
+					 * silently skipping it: reject this host and move on.
+					 */
+					if (conn->sversion < 90600)
+					{
+						libpq_append_conn_error(conn,
+												"require_wal_receiver is not supported on servers older than 9.6 (this server: %d)",
+												conn->sversion);
+						conn->status = CONNECTION_OK;
+						sendTerminateConn(conn);
+						conn->try_next_host = true;
+						conn->replication_checked = true;
+						goto keep_going;
+					}
+
+					/*
+					 * Ask the server whether it's in recovery and, if so, whether
+					 * it currently has a live WAL receiver.
+					 */
+					conn->status = CONNECTION_OK;
+					if (!PQsendQueryContinue(conn,
+											 "SELECT pg_catalog.pg_is_in_recovery(),"
+											 " EXISTS (SELECT 1 FROM pg_catalog.pg_stat_wal_receiver)"))
+						goto error_return;
+					conn->status = CONNECTION_CHECK_REPLICATION;
+					return PGRES_POLLING_READING;
+				}
+
+				/*
 				 * If a read-write, read-only, primary, or standby connection
 				 * is required, see if we have one.
 				 */
@@ -4723,6 +4791,73 @@ keep_going:						/* We will come back to here until there is
 				goto keep_going;
 			}
 
+			case CONNECTION_CHECK_REPLICATION:
+			{
+				/*
+				 * Result of the replication liveness check.  Transiently set
+				 * status = CONNECTION_OK to use the result-consuming helpers.
+				 *
+				 * Columns:
+				 *   0: pg_is_in_recovery()
+				 *   1: a walreceiver row exists
+				 */
+				conn->status = CONNECTION_OK;
+				if (!PQconsumeInput(conn))
+					goto error_return;
+
+				if (PQisBusy(conn))
+				{
+					conn->status = CONNECTION_CHECK_REPLICATION;
+					return PGRES_POLLING_READING;
+				}
+
+				res = PQgetResult(conn);
+				if (res && PQresultStatus(res) == PGRES_TUPLES_OK &&
+					PQntuples(res) == 1)
+				{
+					/* col 0: not in recovery => primary; nothing to check */
+					if (strcmp(PQgetvalue(res, 0, 0), "f") == 0)
+					{
+						conn->in_hot_standby = PG_BOOL_NO;
+						PQclear(res);
+						conn->replication_checked = true;
+						conn->status = CONNECTION_CONSUME;
+						goto keep_going;
+					}
+
+					/* col 1: a live walreceiver exists -> accept */
+					if (strcmp(PQgetvalue(res, 0, 1), "t") == 0)
+					{
+						conn->in_hot_standby = PG_BOOL_YES;
+						PQclear(res);
+						conn->replication_checked = true;
+						conn->status = CONNECTION_CONSUME;
+						goto keep_going;
+					}
+
+					/* standby with no live walreceiver -> skip this host */
+					libpq_append_conn_error(conn,
+											"standby has no active WAL receiver");
+					PQclear(res);
+					conn->status = CONNECTION_OK;
+					sendTerminateConn(conn);
+					conn->try_next_host = true;
+					goto keep_going;
+				}
+
+				/*
+				 * Query failed.  If the server sent an error it's already in
+				 * conn->errorMessage; don't wrap it.
+				 */
+				if (res == NULL || PQresultStatus(res) != PGRES_FATAL_ERROR)
+					libpq_append_conn_error(conn,
+											"could not check replication status of standby");
+				PQclear(res);
+				conn->status = CONNECTION_OK;
+				sendTerminateConn(conn);
+				conn->try_next_host = true;
+				goto keep_going;
+			}
 		default:
 			libpq_append_conn_error(conn,
 									"invalid connection state %d, probably indicative of memory corruption",
@@ -5042,6 +5177,7 @@ pqMakeEmptyPGconn(void)
 	conn->std_strings = false;	/* unless server says differently */
 	conn->default_transaction_read_only = PG_BOOL_UNKNOWN;
 	conn->in_hot_standby = PG_BOOL_UNKNOWN;
+	conn->replication_checked = false;
 	conn->scram_sha_256_iterations = SCRAM_SHA_256_DEFAULT_ITERATIONS;
 	conn->verbosity = PQERRORS_DEFAULT;
 	conn->show_context = PQSHOW_CONTEXT_ERRORS;
@@ -5157,6 +5293,7 @@ freePGconn(PGconn *conn)
 	free(conn->ssl_min_protocol_version);
 	free(conn->ssl_max_protocol_version);
 	free(conn->target_session_attrs);
+	free(conn->require_wal_receiver);
 	free(conn->require_auth);
 	free(conn->load_balance_hosts);
 	free(conn->scram_client_key);
@@ -8394,6 +8531,37 @@ pqParseProtocolVersion(const char *value, ProtocolVersion *result, PGconn *conn,
 
 	libpq_append_conn_error(conn, "invalid %s value: \"%s\"",
 							context, value);
+	return false;
+}
+
+/*
+ * Try to interpret value as boolean.
+ *   true: "true", "on", "yes", or "1"
+ *   false: "false", "no", "off", or "0"
+ */
+static bool
+pqParseBoolConnOption(const char *value, bool *result, PGconn *conn,
+					  const char *optname)
+{
+	if (pg_strcasecmp(value, "true") == 0 ||
+		pg_strcasecmp(value, "on") == 0 ||
+		pg_strcasecmp(value, "yes") == 0 ||
+		pg_strcasecmp(value, "1") == 0)
+	{
+		*result = true;
+		return true;
+	}
+	if (pg_strcasecmp(value, "false") == 0 ||
+		pg_strcasecmp(value, "off") == 0 ||
+		pg_strcasecmp(value, "no") == 0 ||
+		pg_strcasecmp(value, "0") == 0)
+	{
+		*result = false;
+		return true;
+	}
+
+	libpq_append_conn_error(conn, "invalid %s value: \"%s\"",
+							optname, value);
 	return false;
 }
 

@@ -2423,6 +2423,33 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
        </para>
       </listitem>
      </varlistentry>
+     <varlistentry id="libpq-connect-require-wal-receiver" xreflabel="require_wal_receiver">
+      <term><literal>require_wal_receiver</literal></term>
+      <listitem>
+       <para>
+        If set to a true value (the default is false), and the candidate
+        host is a standby, <productname>libpq</productname> verifies that the
+        standby currently has an active WAL receiver process before accepting
+        the connection.  A standby with no active WAL receiver &mdash; for
+        example one whose upstream connection has been lost, or that has not
+        yet connected since starting &mdash; is skipped, and the next host in
+        the list is tried.
+       </para>
+       <para>
+        The check is skipped when connecting to a primary, or when
+        <literal>target_session_attrs</literal> is set to
+        <literal>primary</literal> or <literal>read-write</literal>.  It
+        applies with <literal>any</literal>, <literal>read-only</literal>,
+        <literal>standby</literal>, and <literal>prefer-standby</literal>.
+       </para>
+      <para>
+        This is a <emphasis>liveness</emphasis> check, not a freshness
+        guarantee: a standby that passes may still lag behind the primary,
+        and a standby recovering only from archived WAL (with no WAL receiver)
+        is rejected even though it may be current.
+       </para>
+      </listitem>
+     </varlistentry>
 
      <varlistentry id="libpq-connect-load-balance-hosts" xreflabel="load_balance_hosts">
       <term><literal>load_balance_hosts</literal></term>
