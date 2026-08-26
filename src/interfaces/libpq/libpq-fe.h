@@ -114,6 +114,7 @@ typedef enum
 								 * started.  */
 	CONNECTION_AUTHENTICATING,	/* Authentication is in progress with some
 								 * external system. */
+	CONNECTION_CHECK_REPLICATION,	/* Checking standby has a live walreceiver. */
 } ConnStatusType;
 
 typedef enum
