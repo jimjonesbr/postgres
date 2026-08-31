@@ -1695,8 +1695,12 @@ ProcessUtilitySlow(ParseState *pstate,
 				EventTriggerInhibitCommandCollection();
 				PG_TRY(2);
 				{
-					address = ExecRefreshMatView((RefreshMatViewStmt *) parsetree,
-												 queryString, qc);
+					RefreshMatViewStmt *rmvstmt = (RefreshMatViewStmt *) parsetree;
+
+					if (rmvstmt->kind == REFRESH_MATVIEW_ALL)
+						address = ExecRefreshAllMatViews(rmvstmt, queryString, qc);
+					else
+						address = ExecRefreshMatView(rmvstmt, queryString, qc);
 				}
 				PG_FINALLY(2);
 				{
@@ -2936,7 +2940,10 @@ CreateCommandTag(Node *parsetree)
 			break;
 
 		case T_RefreshMatViewStmt:
-			tag = CMDTAG_REFRESH_MATERIALIZED_VIEW;
+			if (((RefreshMatViewStmt *) parsetree)->kind == REFRESH_MATVIEW_ALL)
+				tag = CMDTAG_REFRESH_ALL_MATERIALIZED_VIEWS;
+			else
+				tag = CMDTAG_REFRESH_MATERIALIZED_VIEW;
 			break;
 
 		case T_AlterSystemStmt:

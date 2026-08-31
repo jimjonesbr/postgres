@@ -5127,7 +5127,7 @@ match_previous_words(int pattern_id,
 
 /* REFRESH MATERIALIZED VIEW */
 	else if (Matches("REFRESH"))
-		COMPLETE_WITH("MATERIALIZED VIEW");
+		COMPLETE_WITH("MATERIALIZED VIEW", "ALL MATERIALIZED VIEWS");
 	else if (Matches("REFRESH", "MATERIALIZED"))
 		COMPLETE_WITH("VIEW");
 	else if (Matches("REFRESH", "MATERIALIZED", "VIEW"))
@@ -5147,6 +5147,28 @@ match_previous_words(int pattern_id,
 		COMPLETE_WITH("DATA");
 	else if (Matches("REFRESH", "MATERIALIZED", "VIEW", "CONCURRENTLY", MatchAny, "WITH", "NO"))
 		COMPLETE_WITH("DATA");
+
+	/* REFRESH ALL MATERIALIZED VIEWS */
+	else if (Matches("REFRESH", "ALL"))
+		COMPLETE_WITH("MATERIALIZED VIEWS");
+	else if (Matches("REFRESH", "ALL", "MATERIALIZED"))
+		COMPLETE_WITH("VIEWS");
+	else if (Matches("REFRESH", "ALL", "MATERIALIZED", "VIEWS"))
+		COMPLETE_WITH("CONCURRENTLY", "WITH DATA", "WITH NO DATA", "VERBOSE");
+	else if (Matches("REFRESH", "ALL", "MATERIALIZED", "VIEWS", "CONCURRENTLY"))
+		COMPLETE_WITH("WITH DATA", "WITH NO DATA", "VERBOSE");
+	else if (Matches("REFRESH", "ALL", "MATERIALIZED", "VIEWS", "WITH") ||
+			 Matches("REFRESH", "ALL", "MATERIALIZED", "VIEWS", "CONCURRENTLY", "WITH"))
+		COMPLETE_WITH("DATA", "NO DATA");
+	else if (Matches("REFRESH", "ALL", "MATERIALIZED", "VIEWS", "WITH", "NO") ||
+			 Matches("REFRESH", "ALL", "MATERIALIZED", "VIEWS", "CONCURRENTLY", "WITH", "NO"))
+		COMPLETE_WITH("DATA");
+	/* VERBOSE is the last option, and may follow WITH [NO] DATA */
+	else if (Matches("REFRESH", "ALL", "MATERIALIZED", "VIEWS", "WITH", "DATA") ||
+			 Matches("REFRESH", "ALL", "MATERIALIZED", "VIEWS", "WITH", "NO", "DATA") ||
+			 Matches("REFRESH", "ALL", "MATERIALIZED", "VIEWS", "CONCURRENTLY", "WITH", "DATA") ||
+			 Matches("REFRESH", "ALL", "MATERIALIZED", "VIEWS", "CONCURRENTLY", "WITH", "NO", "DATA"))
+		COMPLETE_WITH("VERBOSE");
 
 /* REINDEX */
 	else if (Matches("REINDEX") ||

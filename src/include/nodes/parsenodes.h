@@ -4163,12 +4163,31 @@ typedef struct CreateTableAsStmt
  *		REFRESH MATERIALIZED VIEW Statement
  * ----------------------
  */
+/*
+ * RefreshMatViewKind distinguishes the different forms of REFRESH
+ * MATERIALIZED VIEW.  REFRESH_MATVIEW_SINGLE refreshes the single view
+ * named in "relation"; REFRESH_MATVIEW_ALL refreshes every materialized
+ * view in the current database, in which case "relation" is NULL.
+ *
+ * Representing this explicitly (rather than inferring "ALL" from
+ * relation == NULL) leaves room for future qualified forms, such as
+ * refreshing only a subset of views, without overloading the meaning of
+ * a NULL relation.
+ */
+typedef enum RefreshMatViewKind
+{
+	REFRESH_MATVIEW_SINGLE,	/* REFRESH MATERIALIZED VIEW name */
+	REFRESH_MATVIEW_ALL,		/* REFRESH ALL MATERIALIZED VIEWS */
+} RefreshMatViewKind;
+
 typedef struct RefreshMatViewStmt
 {
 	NodeTag		type;
+	RefreshMatViewKind kind;	/* which form of REFRESH was used */
 	bool		concurrent;		/* allow concurrent access? */
 	bool		skipData;		/* true for WITH NO DATA */
-	RangeVar   *relation;		/* relation to insert into */
+	bool		verbose;		/* print progress info? */
+	RangeVar   *relation;		/* relation to insert into, or NULL for ALL */
 } RefreshMatViewStmt;
 
 /* ----------------------

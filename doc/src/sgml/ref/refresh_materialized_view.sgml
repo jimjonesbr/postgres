@@ -23,6 +23,7 @@ PostgreSQL documentation
 <synopsis>
 REFRESH MATERIALIZED VIEW [ CONCURRENTLY ] <replaceable class="parameter">name</replaceable>
     [ WITH [ NO ] DATA ]
+REFRESH ALL MATERIALIZED VIEWS [ CONCURRENTLY ] [ WITH [ NO ] DATA ] [ VERBOSE ]
 </synopsis>
  </refsynopsisdiv>
 
@@ -44,12 +45,44 @@ REFRESH MATERIALIZED VIEW [ CONCURRENTLY ] <replaceable class="parameter">name</
    <literal>CONCURRENTLY</literal> and <literal>WITH NO DATA</literal> may not
    be specified together.
   </para>
+
+  <para>
+   The <literal>ALL</literal> form refreshes every materialized view in the
+   current database that the current user is permitted to refresh, rather than
+   a single named materialized view.  Materialized views are refreshed in an
+   order that respects dependencies between them: if one materialized view is
+   defined in terms of another (directly, or through intervening ordinary
+   views), the view it depends on is refreshed first.  A single
+   <command>REFRESH ALL MATERIALIZED VIEWS</command> therefore brings the
+   entire chain up to date in one step.
+  </para>
+
+  <para>
+   Materialized views that the current user does not own and does not have
+   <literal>MAINTAIN</literal> privilege on are skipped rather than causing an
+   error; the command succeeds even if it refreshes nothing.  If a refreshed
+   materialized view depends, directly or through intervening views, on a
+   materialized view that was skipped, it is refreshed against that
+   dependency's current (possibly stale) contents.  Specify
+   <literal>VERBOSE</literal> to see which materialized views were skipped.
+  </para>
  </refsect1>
 
  <refsect1>
   <title>Parameters</title>
 
   <variablelist>
+   <varlistentry>
+    <term><literal>ALL</literal></term>
+    <listitem>
+     <para>
+      Refresh all materialized views in the current database instead of a
+      single named one.  When <literal>ALL</literal> is specified, no
+      <replaceable class="parameter">name</replaceable> is given.
+     </para>
+    </listitem>
+   </varlistentry>
+
    <varlistentry>
     <term><literal>CONCURRENTLY</literal></term>
     <listitem>
@@ -83,7 +116,20 @@ REFRESH MATERIALIZED VIEW [ CONCURRENTLY ] <replaceable class="parameter">name</
     <listitem>
      <para>
       The name (optionally schema-qualified) of the materialized view to
-      refresh.
+      refresh.  This is used only with the single-view form; it is not given
+      with <literal>ALL</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>VERBOSE</literal></term>
+    <listitem>
+     <para>
+      Print a message for each materialized view as it is refreshed, and for
+      each one that is skipped because the current user lacks permission to
+      refresh it.  This option is only available with the
+      <literal>ALL</literal> form.
      </para>
     </listitem>
    </varlistentry>
@@ -104,6 +150,46 @@ REFRESH MATERIALIZED VIEW [ CONCURRENTLY ] <replaceable class="parameter">name</
    While <command>REFRESH MATERIALIZED VIEW</command> is running, the <xref
    linkend="guc-search-path"/> is temporarily changed to <literal>pg_catalog,
    pg_temp</literal>.
+  </para>
+
+  <para>
+   <command>REFRESH ALL MATERIALIZED VIEWS</command> operates on the set of
+   materialized views that exist when the command begins; materialized views
+   created concurrently by other sessions after that point are not included.
+  </para>
+
+  <para>
+   With <literal>ALL</literal>, <literal>WITH NO DATA</literal> applies to
+   every materialized view the command would refresh: each one is left
+   unpopulated and marked unscannable, so queries against it will fail until
+   it is populated again by a subsequent <command>REFRESH MATERIALIZED
+   VIEW</command>.
+  </para>
+
+  <para>
+   The command runs as a single transaction.  Without
+   <literal>CONCURRENTLY</literal>, this means every refreshed materialized
+   view is held under an <literal>ACCESS EXCLUSIVE</literal> lock until the
+   command commits, and all of the new contents are built before any of them
+   become visible.  On a database with many or large materialized views this
+   can be a long-running transaction holding many locks; consider refreshing
+   selected materialized views individually if that is a concern.
+  </para>
+
+ <para>
+   When <literal>CONCURRENTLY</literal> is specified, materialized views that
+   cannot be refreshed concurrently &mdash; those that are not yet populated,
+   or that lack a suitable unique index &mdash; are skipped with a warning and
+   left unchanged.  Unlike a non-concurrent refresh, which populates an
+   unpopulated materialized view, a concurrent refresh leaves it unpopulated.
+   Consequently, a materialized view that reads from a dependency skipped for
+   being unpopulated fails with an error, just as a stand-alone
+   <command>REFRESH MATERIALIZED VIEW</command> reading from an unpopulated
+   materialized view would; this rolls back the entire command.  To populate
+   such materialized views, use the single-view form without
+   <literal>CONCURRENTLY</literal>, or run <command>REFRESH ALL MATERIALIZED
+   VIEWS</command> without <literal>CONCURRENTLY</literal>, which populates
+   them as it refreshes in dependency order.
   </para>
  </refsect1>
 
@@ -126,6 +212,22 @@ REFRESH MATERIALIZED VIEW order_summary;
 <programlisting>
 REFRESH MATERIALIZED VIEW annual_statistics_basis WITH NO DATA;
 </programlisting></para>
+
+  <para>
+   Refresh every materialized view in the current database that the current
+   user is permitted to refresh:
+<programlisting>
+REFRESH ALL MATERIALIZED VIEWS;
+</programlisting>
+  </para>
+
+  <para>
+   Refresh them concurrently where possible, printing progress and skipping
+   any that cannot be refreshed concurrently:
+<programlisting>
+REFRESH ALL MATERIALIZED VIEWS CONCURRENTLY VERBOSE;
+</programlisting>
+  </para>
  </refsect1>
 
  <refsect1>
