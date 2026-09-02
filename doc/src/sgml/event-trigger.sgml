@@ -77,6 +77,7 @@
       <listitem><para><literal>GRANT</literal></para></listitem>
       <listitem><para><literal>IMPORT FOREIGN SCHEMA</literal></para></listitem>
       <listitem><para><literal>REINDEX</literal></para></listitem>
+      <listitem><para><literal>REFRESH ALL MATERIALIZED VIEWS</literal></para></listitem>
       <listitem><para><literal>REFRESH MATERIALIZED VIEW</literal></para></listitem>
       <listitem><para><literal>REVOKE</literal></para></listitem>
       <listitem><para><literal>SECURITY LABEL</literal></para></listitem>

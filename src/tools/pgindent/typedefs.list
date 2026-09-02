@@ -1752,6 +1752,9 @@ ManyTestResourceKind
 Material
 MaterialPath
 MaterialState
+MatViewRefreshContext
+MatViewRefreshNode
+MatViewVisitState
 MdPathStr
 MdfdVec
 Memoize
@@ -2589,6 +2592,7 @@ RecursiveUnion
 RecursiveUnionPath
 RecursiveUnionState
 RefetchForeignRow_function
+RefreshMatViewKind
 RefreshMatViewStmt
 RegProcedure
 Regis

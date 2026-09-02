@@ -1685,24 +1685,38 @@ ProcessUtilitySlow(ParseState *pstate,
 				break;
 
 			case T_RefreshMatViewStmt:
+				{
+					RefreshMatViewStmt *rmvstmt = (RefreshMatViewStmt *)parsetree;
 
-				/*
-				 * REFRESH CONCURRENTLY executes some DDL commands internally.
-				 * Inhibit DDL command collection here to avoid those commands
-				 * from showing up in the deparsed command queue.  The refresh
-				 * command itself is queued, which is enough.
-				 */
-				EventTriggerInhibitCommandCollection();
-				PG_TRY(2);
-				{
-					address = ExecRefreshMatView((RefreshMatViewStmt *) parsetree,
-												 queryString, qc);
+					/*
+					* REFRESH CONCURRENTLY executes some DDL commands internally.
+					* Inhibit DDL command collection here to avoid those commands
+					* from showing up in the deparsed command queue.  The refresh
+					* command itself is queued, which is enough --- except for the
+					* ALL form, which queues nothing (see below).
+					*/
+					EventTriggerInhibitCommandCollection();
+					PG_TRY(2);
+					{
+						if (rmvstmt->kind == REFRESH_MATVIEW_ALL)
+							address = ExecRefreshAllMatViews(rmvstmt, queryString, qc);
+						else
+							address = ExecRefreshMatView(rmvstmt, queryString, qc);
+					}
+					PG_FINALLY(2);
+					{
+						EventTriggerUndoInhibitCommandCollection();
+					}
+					PG_END_TRY(2);
+
+					/*
+					* The ALL form affects an arbitrary number of objects, so
+					* there is no single address for the event trigger
+					* machinery to report; don't stash an invalid one.
+					*/
+					if (rmvstmt->kind == REFRESH_MATVIEW_ALL)
+						commandCollected = true;
 				}
-				PG_FINALLY(2);
-				{
-					EventTriggerUndoInhibitCommandCollection();
-				}
-				PG_END_TRY(2);
 				break;
 
 			case T_CreateTrigStmt:
@@ -2936,7 +2950,10 @@ CreateCommandTag(Node *parsetree)
 			break;
 
 		case T_RefreshMatViewStmt:
-			tag = CMDTAG_REFRESH_MATERIALIZED_VIEW;
+			if (((RefreshMatViewStmt *) parsetree)->kind == REFRESH_MATVIEW_ALL)
+				tag = CMDTAG_REFRESH_ALL_MATERIALIZED_VIEWS;
+			else
+				tag = CMDTAG_REFRESH_MATERIALIZED_VIEW;
 			break;
 
 		case T_AlterSystemStmt:

@@ -5051,6 +5051,7 @@ OptNoLog:	UNLOGGED					{ $$ = RELPERSISTENCE_UNLOGGED; }
  *
  *		QUERY :
  *				REFRESH MATERIALIZED VIEW qualified_name
+ *				REFRESH ALL MATERIALIZED VIEWS opt_concurrently opt_with_data opt_verbose
  *
  *****************************************************************************/
 
@@ -5059,9 +5060,21 @@ RefreshMatViewStmt:
 				{
 					RefreshMatViewStmt *n = makeNode(RefreshMatViewStmt);
 
+					n->kind = REFRESH_MATVIEW_SINGLE;
 					n->concurrent = $4;
 					n->relation = $5;
 					n->skipData = !($6);
+					$$ = (Node *) n;
+				}
+			| REFRESH ALL MATERIALIZED VIEWS opt_concurrently opt_with_data opt_verbose
+				{
+					RefreshMatViewStmt *n = makeNode(RefreshMatViewStmt);
+
+					n->kind = REFRESH_MATVIEW_ALL;
+					n->concurrent = $5;
+					n->relation = NULL;
+					n->skipData = !($6);
+					n->verbose = $7;
 					$$ = (Node *) n;
 				}
 		;

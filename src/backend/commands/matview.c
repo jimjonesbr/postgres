@@ -20,10 +20,13 @@
 #include "access/multixact.h"
 #include "access/tableam.h"
 #include "access/xact.h"
+#include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
+#include "catalog/pg_depend.h"
 #include "catalog/pg_opclass.h"
+#include "catalog/pg_rewrite.h"
 #include "commands/matview.h"
 #include "commands/repack.h"
 #include "commands/tablecmds.h"
@@ -33,10 +36,15 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "rewrite/rewriteHandler.h"
+#include "rewrite/rewriteSupport.h"
 #include "storage/lmgr.h"
 #include "tcop/tcopprot.h"
+#include "utils/acl.h"
+#include "utils/hsearch.h"
 #include "utils/builtins.h"
+#include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
@@ -53,6 +61,56 @@ typedef struct
 	BulkInsertState bistate;	/* bulk insert state */
 } DR_transientrel;
 
+/*
+ * State of a node during the depth-first walk in BuildViewDependencyGraph().
+ * IN_PROGRESS marks a node on the current recursion path, which is how the
+ * walk notices a cycle.
+ */
+typedef enum MatViewVisitState
+{
+	MATVIEW_UNVISITED,
+	MATVIEW_IN_PROGRESS,
+	MATVIEW_DONE,
+} MatViewVisitState;
+
+/*
+ * One node of the view dependency graph used by REFRESH ALL MATERIALIZED
+ * VIEWS.  There is a node for every view and materialized view the catalog
+ * scan found; plain views are included because a matview can depend on
+ * another matview through one.
+ *
+ * relkind and the names are captured during the unlocked catalog scan;
+ * LockRelationsInOidOrder() is where they are revalidated.
+ */
+typedef struct MatViewRefreshNode
+{
+	Oid			oid;			/* hash key --- must be first field */
+	char		relkind;		/* captured at discovery time */
+	char	   *relname;
+	char	   *nspname;
+	bool		permitted;		/* may we refresh it?  matviews only */
+	MatViewVisitState state;	/* dependency-walk state */
+} MatViewRefreshNode;
+
+/*
+ * Working state for one REFRESH ALL MATERIALIZED VIEWS command.
+ *
+ * The nodes live in the hash table, which lets the dependency walk find a
+ * relation's node by OID in constant time.  reloids lists the same relations
+ * again so they can be iterated in a defined order; everything after
+ * LockRelationsInOidOrder() relies on that order being ascending by OID.
+ *
+ * All of it is allocated in mcxt, so FreeMatViewRefreshContext() can release
+ * the lot with one MemoryContextDelete().
+ */
+typedef struct MatViewRefreshContext
+{
+	MemoryContext mcxt;			/* everything below is allocated here */
+	HTAB	   *nodes_by_oid;	/* Oid -> MatViewRefreshNode */
+	List	   *reloids;		/* OIDs of every node; sorted into ascending */
+	List	   *refresh_order;	/* matview OIDs, dependency order */
+} MatViewRefreshContext;
+
 static int	matview_maintenance_depth = 0;
 
 static void transientrel_startup(DestReceiver *self, int operation, TupleDesc typeinfo);
@@ -67,6 +125,16 @@ static void refresh_by_heap_swap(Oid matviewOid, Oid OIDNewHeap, char relpersist
 static bool is_usable_unique_index(Relation indexRel);
 static void OpenMatViewIncrementalMaintenance(void);
 static void CloseMatViewIncrementalMaintenance(void);
+static void InitMatViewRefreshContext(MatViewRefreshContext *context);
+static void FreeMatViewRefreshContext(MatViewRefreshContext *context);
+static MatViewRefreshNode *AddMatViewRefreshNode(MatViewRefreshContext *context, Form_pg_class classForm,
+												 bool permitted);
+static MatViewRefreshNode *FindMatViewRefreshNode(MatViewRefreshContext *context, Oid relid);
+static List *MatViewGetDependencies(Oid relationOid);
+static bool MatViewRefreshPermitted(Oid relOid);
+static void BuildViewDependencyGraph(Oid relationOid, MatViewRefreshContext *context);
+static void LockRelationsInOidOrder(MatViewRefreshContext *context, bool concurrent);
+static bool MatViewCanRefreshConcurrently(Oid matviewOid);
 
 /*
  * SetMatViewPopulatedState
@@ -136,6 +204,606 @@ ExecRefreshMatView(RefreshMatViewStmt *stmt, const char *queryString,
 
 	return RefreshMatViewByOid(matviewOid, false, stmt->skipData,
 							   stmt->concurrent, queryString, qc);
+}
+
+/*
+ * InitMatViewRefreshContext
+ *
+ * Set up empty state for one REFRESH ALL MATERIALIZED VIEWS command.
+ *
+ * Everything the graph owns -- the hash table and its entries, the cached
+ * relation names, and both Lists -- goes in a dedicated context so that
+ * FreeMatViewRefreshContext() can release all of it at once.  We never reach
+ * that call on the error path, but the context is a child of the caller's, so
+ * abort processing cleans it up anyway.
+ */
+static void
+InitMatViewRefreshContext(MatViewRefreshContext *context)
+{
+	HASHCTL ctl;
+
+	context->mcxt = AllocSetContextCreate(CurrentMemoryContext,
+										  "REFRESH ALL MATERIALIZED VIEWS",
+										  ALLOCSET_DEFAULT_SIZES);
+
+	context->reloids = NIL;
+	context->refresh_order = NIL;
+
+	ctl.keysize = sizeof(Oid);
+	ctl.entrysize = sizeof(MatViewRefreshNode);
+	ctl.hcxt = context->mcxt;
+
+	context->nodes_by_oid = hash_create("REFRESH ALL MATERIALIZED VIEWS nodes",
+										128,
+										&ctl,
+										HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+}
+
+static void
+FreeMatViewRefreshContext(MatViewRefreshContext *context)
+{
+	MemoryContextDelete(context->mcxt);
+
+	context->mcxt = NULL;
+	context->nodes_by_oid = NULL;
+	context->reloids = NIL;
+	context->refresh_order = NIL;
+}
+
+/*
+ * AddMatViewRefreshNode
+ *
+ * Record one view or materialized view in the graph and return its node.
+ *
+ * "permitted" is meaningful only for materialized views; callers pass false
+ * for plain views, which are recorded solely so the dependency walk can pass
+ * through them.
+ */
+static MatViewRefreshNode *
+AddMatViewRefreshNode(MatViewRefreshContext *context, Form_pg_class classForm,
+					  bool permitted)
+{
+	MatViewRefreshNode *node;
+	Oid relid = classForm->oid;
+	MemoryContext oldcxt;
+	bool found;
+
+	node = (MatViewRefreshNode *)hash_search(context->nodes_by_oid, &relid,
+											 HASH_ENTER, &found);
+	Assert(!found); /* pg_class OIDs are unique */
+
+	/* hash_search has already filled in node->oid */
+	node->relkind = classForm->relkind;
+	node->permitted = permitted;
+
+	/*
+	 * Take the names straight from the tuple we are looking at.  Going back
+	 * to the syscache would use a fresh catalog snapshot, which can disagree
+	 * with the snapshot of the scan that handed us this tuple and hand back a
+	 * NULL relname for a concurrently dropped relation.
+	 */
+	node->state = MATVIEW_UNVISITED;
+
+	oldcxt = MemoryContextSwitchTo(context->mcxt);
+
+	/*
+	 * Copy the names out of the tuple we were handed rather than looking them
+	 * up again.  A syscache lookup would use a fresh catalog snapshot, which
+	 * can disagree with the scan's snapshot and hand back NULL for a relation
+	 * dropped in the meantime.
+	 */
+	node->relname = pstrdup(NameStr(classForm->relname));
+	node->nspname = get_namespace_name(classForm->relnamespace);
+
+	context->reloids = lappend_oid(context->reloids, relid);
+
+	MemoryContextSwitchTo(oldcxt);
+
+	return node;
+}
+
+/*
+ * Look up the node for a relation, or NULL if the catalog scan never saw it.
+ */
+static MatViewRefreshNode *
+FindMatViewRefreshNode(MatViewRefreshContext *context, Oid relid)
+{
+	return (MatViewRefreshNode *) hash_search(context->nodes_by_oid, &relid,
+											  HASH_FIND, NULL);
+}
+
+/*
+ * MatViewGetDependencies
+ *
+ * Return the OIDs of the views and materialized views that relationOid's
+ * _RETURN rule reads from.
+ *
+ * Only direct dependencies are returned: if a matview selects from a plain
+ * view that itself selects from another matview, only the plain view appears
+ * here.  Walking the graph transitively is the caller's job.
+ *
+ * Other relation kinds are ignored, having no _RETURN rule and so no way to
+ * lead to further matviews.  Dependencies that the rule does not record --
+ * most notably a matview read by a function the view calls -- are invisible
+ * here, and hence to the refresh ordering.
+ *
+ * The caller must hold a lock on relationOid; we rely on it to keep the rule
+ * and its pg_depend entries from shifting under us.
+ */
+static List *
+MatViewGetDependencies(Oid relationOid)
+{
+	HeapTuple	ruleTuple;
+	Form_pg_rewrite ruleForm;
+	Relation	dependDesc;
+	SysScanDesc scan;
+	ScanKeyData skey[2];
+	HeapTuple	tuple;
+	List	   *result = NIL;
+
+	/*
+	 * Find the relation's _RETURN rule.
+	 */
+	ruleTuple = SearchSysCache2(RULERELNAME,
+								ObjectIdGetDatum(relationOid),
+								PointerGetDatum(ViewSelectRuleName));
+
+	if (!HeapTupleIsValid(ruleTuple))
+		elog(ERROR, "could not find _RETURN rule for relation %u",
+			 relationOid);
+
+	ruleForm = (Form_pg_rewrite) GETSTRUCT(ruleTuple);
+
+	/*
+	 * Find the objects on which the _RETURN rule depends.
+	 *
+	 * The rule itself is the dependent object:
+	 *
+	 *     classid = RewriteRelationId
+	 *     objid   = ruleForm->oid
+	 *
+	 * Dependencies recorded by rewriteDefine.c for objects referenced by
+	 * the rule's action are NORMAL dependencies.  The INTERNAL dependency
+	 * from the rule to its owning relation is deliberately ignored.
+	 */
+	dependDesc = table_open(DependRelationId, AccessShareLock);
+
+	ScanKeyInit(&skey[0],
+				Anum_pg_depend_classid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(RewriteRelationId));
+
+	ScanKeyInit(&skey[1],
+				Anum_pg_depend_objid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(ruleForm->oid));
+
+	scan = systable_beginscan(dependDesc,
+							  DependDependerIndexId,
+							  true,
+							  NULL,
+							  2,
+							  skey);
+
+	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
+	{
+		Form_pg_depend depend = (Form_pg_depend) GETSTRUCT(tuple);
+		char		relkind;
+
+		/*
+		 * We are interested only in dependencies on relations.
+		 */
+		if (depend->refclassid != RelationRelationId ||
+			depend->deptype != DEPENDENCY_NORMAL)
+			continue;
+
+		relkind = get_rel_relkind(depend->refobjid);
+
+		/*
+		 * Views and materialized views can themselves have _RETURN rules
+		 * and therefore need to be traversed by the caller.  Other
+		 * relation kinds terminate the dependency traversal.
+		 */
+		if (relkind != RELKIND_VIEW &&
+			relkind != RELKIND_MATVIEW)
+			continue;
+
+		result = list_append_unique_oid(result, depend->refobjid);
+	}
+
+	systable_endscan(scan);
+	table_close(dependDesc, AccessShareLock);
+
+	ReleaseSysCache(ruleTuple);
+
+	return result;
+}
+
+/*
+ * MatViewRefreshPermitted
+ *
+ * Does the current user have the right to refresh this materialized view ---
+ * that is, own it, or hold MAINTAIN on it?
+ *
+ * This duplicates the test RangeVarCallbackMaintainsTable() applies to the
+ * single-view form, which raises an error rather than returning a verdict.
+ * Keep the two in step.
+ */
+static bool
+MatViewRefreshPermitted(Oid relOid)
+{
+	return object_ownercheck(RelationRelationId, relOid, GetUserId()) ||
+		pg_class_aclcheck(relOid, GetUserId(), ACL_MAINTAIN) == ACLCHECK_OK;
+}
+
+/*
+ * BuildViewDependencyGraph
+ *
+ * Walk the dependency graph rooted at relationOid depth-first, appending each
+ * materialized view to context->refresh_order after everything it reads from.
+ * Run from every root, this leaves refresh_order safe to refresh front to back.
+ *
+ * The walk does not filter on permission: unpermitted matviews are traversed
+ * and appended like any other, since a permitted one may sit on the far side
+ * of them.  Skipping those is the caller's job.
+ *
+ * The caller must have created a node for every relation reachable from
+ * relationOid, and must hold a lock on each; we take none, and read the
+ * _RETURN rules assuming they cannot change underneath us.  A relation with
+ * no node is one the caller never saw and never locked, so rather than follow
+ * the edge unprotected we error out and ask for the command to be retried.
+ */
+static void
+BuildViewDependencyGraph(Oid relationOid, MatViewRefreshContext *context)
+{
+	MatViewRefreshNode *node;
+	List	   *dependencies;
+	ListCell   *lc;
+
+	/* Guard against stack overflow due to deeply nested views */
+	check_stack_depth();
+
+	node = FindMatViewRefreshNode(context, relationOid);
+
+	if (node == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("materialized view dependencies changed concurrently"),
+				 errdetail("A view was redefined to depend on relation with OID %u, "
+						   "which was not locked by REFRESH ALL MATERIALIZED VIEWS.",
+						   relationOid),
+				 errhint("Retry REFRESH ALL MATERIALIZED VIEWS.")));
+
+	if (node->state == MATVIEW_DONE)
+		return;
+
+	if (node->state == MATVIEW_IN_PROGRESS)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+				 errmsg("circular dependency detected in \"%s\"",
+						quote_qualified_identifier(node->nspname, node->relname))));
+
+	node->state = MATVIEW_IN_PROGRESS;
+	dependencies = MatViewGetDependencies(relationOid);
+
+	foreach(lc, dependencies)
+		BuildViewDependencyGraph(lfirst_oid(lc), context);
+	list_free(dependencies);
+
+	node->state = MATVIEW_DONE;
+
+	if (node->relkind == RELKIND_MATVIEW)
+	{
+		MemoryContext oldcxt = MemoryContextSwitchTo(context->mcxt);
+
+		context->refresh_order = lappend_oid(context->refresh_order,
+											 relationOid);
+		MemoryContextSwitchTo(oldcxt);
+	}
+}
+
+/*
+ * LockRelationsInOidOrder
+ *
+ * Lock every relation in context->nodes, in ascending OID order, and re-check
+ * under the lock what we recorded during the unlocked catalog scan.  Taking
+ * the locks in a consistent order keeps this phase from deadlocking against
+ * another session doing the same thing; it says nothing about the refresh
+ * phase, which locks base relations in whatever order the plans require.
+ *
+ * Matviews we intend to refresh are locked with the mode the refresh itself
+ * will use (AccessExclusiveLock, or ExclusiveLock when concurrent); every
+ * other relation gets AccessShareLock, which is enough to block CREATE OR
+ * REPLACE VIEW / DROP and thus freeze the _RETURN rules for the duration.
+ *
+ * Nodes for relations that were dropped between the scan and the lock are
+ * removed from the list, so callers must be prepared for an OID recorded
+ * during the scan to have no node afterwards.
+ */
+static void
+LockRelationsInOidOrder(MatViewRefreshContext *context, bool concurrent)
+{
+	ListCell   *lc;
+
+	/* Nothing depends on the discovery order, so sort in place. */
+	list_sort(context->reloids, list_oid_cmp);
+
+	foreach(lc, context->reloids)
+	{
+		Oid			relid = lfirst_oid(lc);
+		MatViewRefreshNode *node = FindMatViewRefreshNode(context, relid);
+
+		LOCKMODE	lockmode;
+
+		Assert(node != NULL);
+
+		/* Optimistic choice, based on the unlocked catalog scan. */
+		if (node->relkind == RELKIND_MATVIEW && node->permitted)
+			lockmode = concurrent ? ExclusiveLock : AccessExclusiveLock;
+		else
+			lockmode = AccessShareLock;
+
+		LockRelationOid(relid, lockmode);
+
+		/* Everything below is authoritative: the lock is now held. */
+
+		/*
+		 * The relation may have been dropped while we waited for the lock.
+		 * Anything depending on it must have been dropped along with it, so
+		 * we can simply forget about it rather than fail the whole command.
+		 *
+		 * get_rel_relkind() returns '\0' for a relation that no longer
+		 * exists, and a live relation cannot change relkind in place, so a
+		 * mismatch here means exactly one thing: it is gone.
+		 */
+		if (get_rel_relkind(relid) != node->relkind)
+		{
+			UnlockRelationOid(relid, lockmode);
+			context->reloids = foreach_delete_current(context->reloids, lc);
+			if (hash_search(context->nodes_by_oid, &relid,
+							HASH_REMOVE, NULL) == NULL)
+				elog(ERROR, "hash table corrupted");
+			continue;
+		}
+
+		/*
+		 * Re-check refresh permission now that we hold the lock.
+		 *
+		 * Only the revoke direction is actionable.  If permission was
+		 * granted since the scan we hold only AccessShareLock, which is not
+		 * strong enough to refresh under, so we leave the matview marked
+		 * unpermitted and skip it: this command acts on the permissions in
+		 * effect when it began.  If permission was revoked we already hold
+		 * the stronger lock, so dropping the matview from consideration
+		 * costs nothing.
+		 *
+		 * This is best-effort regardless, since GRANT and REVOKE do not lock
+		 * the relation and so may change things again while we hold ours.
+		 */
+		if (node->relkind == RELKIND_MATVIEW && node->permitted)
+			node->permitted = MatViewRefreshPermitted(relid);
+	}
+}
+
+/*
+ * MatViewCanRefreshConcurrently
+ *
+ * Can this materialized view be refreshed with CONCURRENTLY?  That needs it
+ * to be populated, and to have a unique index.
+ *
+ * These are the same two conditions the single-view path enforces, where
+ * failing either is an error; REFRESH ALL asks first so it can skip the
+ * matview with a warning instead.  Keep the two in step.
+ *
+ * The caller holds a lock on the matview already, so we open with NoLock.
+ */
+static bool
+MatViewCanRefreshConcurrently(Oid matviewOid)
+{
+	Relation	matviewRel;
+	List	   *indexoidlist;
+	ListCell   *indexoidscan;
+	bool		usable = false;
+
+	matviewRel = table_open(matviewOid, NoLock);
+
+	/* Concurrent refresh requires a populated matview. */
+	if (!RelationIsPopulated(matviewRel))
+	{
+		table_close(matviewRel, NoLock);
+		return false;
+	}
+
+	/* ... and at least one usable unique index. */
+	indexoidlist = RelationGetIndexList(matviewRel);
+	foreach(indexoidscan, indexoidlist)
+	{
+		Oid			indexoid = lfirst_oid(indexoidscan);
+		Relation	indexRel;
+
+		indexRel = index_open(indexoid, AccessShareLock);
+		usable = is_usable_unique_index(indexRel);
+		index_close(indexRel, AccessShareLock);
+
+		if (usable)
+			break;
+	}
+	list_free(indexoidlist);
+
+	table_close(matviewRel, NoLock);
+
+	return usable;
+}
+
+/*
+ * ExecRefreshAllMatViews -- implement REFRESH ALL MATERIALIZED VIEWS
+ *
+ * Refresh every materialized view in the current database that the current
+ * user owns or holds MAINTAIN on, each one after everything it reads from,
+ * directly or through plain views in between.  Matviews the user cannot
+ * refresh are skipped rather than reported as errors, so the command succeeds
+ * even when it refreshes nothing.
+ *
+ * Four steps:
+ *  1) scan pg_class for every view and matview, plus the user's permission
+ *     on each matview;
+ *  2) lock the lot (LockRelationsInOidOrder);
+ *  3) derive a refresh order from the now-frozen _RETURN rules
+ *     (BuildViewDependencyGraph);
+ *  4) refresh in that order. The first two steps are what let the last hand bare
+ *     OIDs to RefreshMatViewByOid(), which neither locks nor checks permissions
+ *     and expects its caller to have done both.
+ *
+ * Everything runs in the caller's transaction, so without CONCURRENTLY every
+ * refreshed matview stays under AccessExclusiveLock until commit and they all
+ * become visible at once.
+ *
+ * Returns InvalidObjectAddress: unlike the single-view form there is no one
+ * object to report.  The command tag is set on qc before returning.
+ */
+ObjectAddress
+ExecRefreshAllMatViews(RefreshMatViewStmt *stmt, const char *queryString,
+					   QueryCompletion *qc)
+{
+	Relation	pgclassRel;
+	TableScanDesc scan;
+	HeapTuple	tuple;
+	ListCell   *lc;
+	MatViewRefreshContext ctx;
+	int			npermitted = 0;
+
+	/*
+	 * CONCURRENTLY requires data, same as the single-statement form.
+	 * This very same check is done in ExecRefreshMatView, but we do it
+	 * here too to avoid doing the catalog scan and locking if the
+	 * command is inevitably going to fail.
+	 */
+	if (stmt->concurrent && stmt->skipData)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("%s options %s and %s cannot be used together",
+						"REFRESH", "CONCURRENTLY", "WITH NO DATA")));
+
+	InitMatViewRefreshContext(&ctx);
+
+	/*
+	 * One catalog scan.  Every matview is a refresh root; we also record
+	 * every view so the whole reachable graph can be locked below.  Locking
+	 * all views (AccessShareLock) freezes their _RETURN rules, so a single
+	 * discovery pass under the locks is authoritative -- no second pass and
+	 * no concurrent-change comparison needed.
+	 *
+	 * Note: this takes AccessShareLock on every view in the database.  That
+	 * is cheap in the common case but is a real lock-table cost in databases
+	 * with very large numbers of views.
+	 */
+	pgclassRel = table_open(RelationRelationId, AccessShareLock);
+	scan = table_beginscan_catalog(pgclassRel, 0, NULL);
+
+	while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
+	{
+		Form_pg_class classForm = (Form_pg_class) GETSTRUCT(tuple);
+		MatViewRefreshNode *node;
+
+		if (classForm->relkind != RELKIND_MATVIEW &&
+			classForm->relkind != RELKIND_VIEW)
+			continue;
+
+		/* Skip temp relations of other backends; we cannot access them */
+		if (classForm->relpersistence == RELPERSISTENCE_TEMP &&
+			!isTempNamespace(classForm->relnamespace))
+			continue;
+
+		node = AddMatViewRefreshNode(&ctx, classForm,
+									 classForm->relkind == RELKIND_MATVIEW &&
+									 MatViewRefreshPermitted(classForm->oid));
+
+		if (classForm->relkind == RELKIND_MATVIEW)
+		{
+			if (!node->permitted)
+				ereport(WARNING,
+						(errmsg("permission denied to refresh \"%s\", skipping it",
+								quote_qualified_identifier(node->nspname, node->relname))));
+			else if (node->permitted)
+				npermitted++;
+		}
+	}
+
+	table_endscan(scan);
+	table_close(pgclassRel, AccessShareLock);
+
+	/* no permitted matviews to refresh still reports the right tag */
+	if (npermitted == 0)
+	{
+		FreeMatViewRefreshContext(&ctx);
+
+		if (qc)
+			SetQueryCompletion(qc, CMDTAG_REFRESH_ALL_MATERIALIZED_VIEWS, 0);
+
+		return InvalidObjectAddress;
+	}
+
+	/* Lock everything in a deadlock-safe order, rechecking under the lock. */
+	LockRelationsInOidOrder(&ctx, stmt->concurrent);
+
+	/*
+	 * Walk the graph now that everything is locked.  Only permitted matviews
+	 * are used as roots; the walk itself descends through whatever it finds.
+	 * The nodes already exist, so this only sets visit states and fills
+	 * refresh_order.
+	 */
+	foreach (lc, ctx.reloids)
+	{
+		Oid relid = lfirst_oid(lc);
+		MatViewRefreshNode *node = FindMatViewRefreshNode(&ctx, relid);
+
+		Assert(node != NULL);
+
+		if (node->relkind == RELKIND_MATVIEW && node->permitted)
+			BuildViewDependencyGraph(relid, &ctx);
+	}
+
+	/* Refresh in dependency order. */
+	foreach(lc, ctx.refresh_order)
+	{
+		Oid			mv = lfirst_oid(lc);
+		MatViewRefreshNode *node = FindMatViewRefreshNode(&ctx, mv);
+
+		Assert(node != NULL);
+
+		/*
+		 * refresh_order only ever contains matviews reached from a permitted
+		 * root, but a matview can be reached as a *dependency* of a permitted
+		 * root while itself not being permitted.  Skip those.
+		 */
+		if (!node->permitted)
+			continue;
+
+		if (stmt->concurrent && !MatViewCanRefreshConcurrently(mv))
+		{
+			ereport(WARNING,
+					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					 errmsg("cannot refresh materialized view \"%s\" concurrently, skipping it",
+							quote_qualified_identifier(node->nspname, node->relname)),
+					 errdetail("Concurrent refresh requires a populated materialized view with a unique index.")));
+			continue;
+		}
+
+		if (stmt->verbose)
+			ereport(INFO,
+					(errmsg("refreshing materialized view \"%s\"",
+							quote_qualified_identifier(node->nspname, node->relname))));
+
+		RefreshMatViewByOid(mv, false, stmt->skipData,
+							stmt->concurrent, queryString, NULL);
+	}
+
+	FreeMatViewRefreshContext(&ctx);
+
+	if (qc)
+		SetQueryCompletion(qc, CMDTAG_REFRESH_ALL_MATERIALIZED_VIEWS, 0);
+
+	return InvalidObjectAddress;
 }
 
 /*

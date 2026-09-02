@@ -4163,12 +4163,20 @@ typedef struct CreateTableAsStmt
  *		REFRESH MATERIALIZED VIEW Statement
  * ----------------------
  */
+typedef enum RefreshMatViewKind
+{
+	REFRESH_MATVIEW_SINGLE, /* REFRESH MATERIALIZED VIEW name */
+	REFRESH_MATVIEW_ALL,	/* REFRESH ALL MATERIALIZED VIEWS */
+} RefreshMatViewKind;
+
 typedef struct RefreshMatViewStmt
 {
-	NodeTag		type;
-	bool		concurrent;		/* allow concurrent access? */
-	bool		skipData;		/* true for WITH NO DATA */
-	RangeVar   *relation;		/* relation to insert into */
+	NodeTag type;
+	RefreshMatViewKind kind; /* which form of REFRESH was used */
+	bool concurrent;		 /* allow concurrent access? */
+	bool skipData;			 /* true for WITH NO DATA */
+	bool verbose;			 /* print progress info? */
+	RangeVar *relation;		 /* relation to insert into, or NULL for ALL */
 } RefreshMatViewStmt;
 
 /* ----------------------
