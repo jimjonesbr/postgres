@@ -1729,6 +1729,7 @@ dropdb(const char *dbname, bool missing_ok, bool force)
 	int			nslots,
 				nslots_active;
 	int			nsubscriptions;
+	XLogRecPtr	drop_lsn = InvalidXLogRecPtr;
 
 	/*
 	 * Look up the target database's OID, and get exclusive lock on it. We
@@ -1861,6 +1862,16 @@ dropdb(const char *dbname, bool missing_ok, bool force)
 	pgstat_drop_database(db_id);
 
 	/*
+	 * Capture the recovery target LSN for log_object_drops before the
+	 * non-transactional in-place update below.  Everything WAL-logged before
+	 * this point is transactional, so recovering up to (but not including)
+	 * this LSN yields a fully valid database.  Any later LSN would replay the
+	 * invalid marker set below.
+	 */
+	if (log_object_drops)
+		drop_lsn = GetXLogInsertRecPtr();
+
+	/*
 	 * Except for the deletion of the catalog row, subsequent actions are not
 	 * transactional (consider DropDatabaseBuffers() discarding modified
 	 * buffers). But we might crash or get interrupted below. To prevent
@@ -1893,19 +1904,14 @@ dropdb(const char *dbname, bool missing_ok, bool force)
 	CatalogTupleDelete(pgdbrel, &tup->t_self);
 	heap_freetuple(tup);
 
-	/* Log LSN after database drop operation completes */
+	/* Log the LSN captured before the database was marked invalid */
 	if (log_object_drops)
-	{
-		XLogRecPtr	current_lsn = GetXLogInsertRecPtr();
-
 		ereport(LOG,
 				(errmsg("database \"%s\" (OID %u) dropped, lsn=%X/%08X",
-						dbname, db_id, LSN_FORMAT_ARGS(current_lsn)),
+						dbname, db_id, LSN_FORMAT_ARGS(drop_lsn)),
 				 errhint("To recover to the point before this drop, use recovery_target_lsn = '%X/%08X' "
-						 "with recovery_target_inclusive = false. See the log_object_drops "
-						 "documentation for caveats and required manual cleanup steps.",
-						 LSN_FORMAT_ARGS(current_lsn))));
-	}
+						 "with recovery_target_inclusive = false.",
+						 LSN_FORMAT_ARGS(drop_lsn))));
 
 	/*
 	 * Drop db-specific replication slots.
